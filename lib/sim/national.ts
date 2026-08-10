@@ -95,6 +95,13 @@ export type NationalInput = {
   overall: number
   position: Position
   nationality: string
+  /**
+   * Pontos somados **so** na decisao de convocar, vindos da reputacao.
+   *
+   * Nao entra na producao nem na nota: quem foi convocado pelo nome joga com o
+   * nivel que tem. Sem essa separacao, ser famoso melhoraria o jogador.
+   */
+  callUpBonus?: number
 }
 
 /**
@@ -109,7 +116,7 @@ export function playNationalSeason(
 ): NationalSeason | null {
   const nation = nationById(input.nationality)
 
-  if (!nation || !isCalledUp(input.overall, nation)) {
+  if (!nation || !isCalledUp(input.overall + (input.callUpBonus ?? 0), nation)) {
     return null
   }
 

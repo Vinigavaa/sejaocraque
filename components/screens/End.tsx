@@ -1,41 +1,62 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
+import { careerShareText } from '@/lib/game/shareText'
 import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
-import { careerTotals, ladderLabel, ladderRung, LADDER_LABELS } from '@/lib/sim/ladder'
-import { POSITION_LABEL } from '@/lib/sim/types'
+import { careerTotals, ladderRung, LADDER_LABELS } from '@/lib/sim/ladder'
+import { shareCardImage } from '@/lib/ui/shareImage'
 
 import { ClubCrest } from '../Crest'
 import { ScreenLayout } from '../ScreenLayout'
+import { ShareCard } from '../ShareCard'
 import { Display, GhostButton, PrimaryButton, scaled, SectionLabel, Stat, t } from '../shared'
 
 export function End({ game }: { game: Game }) {
   const career = game.career
-  const [copied, setCopied] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [status, setStatus] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
 
   if (!career) return null
 
   const totals = careerTotals(career)
   const rung = ladderRung(totals)
-  const label = ladderLabel(totals)
 
-  const share = async () => {
-    const text =
-      `${career.config.name} — ${label}\n` +
-      `${totals.goals} gols · ${totals.titles} títulos · ${totals.ballonDOrs} bolas de ouro\n` +
-      `CRAQUE · seed ${career.config.seed}`
+  /** A mensagem some sozinha: ela confirma uma ação, não é estado da tela. */
+  const flash = (message: string) => {
+    setStatus(message)
+    setTimeout(() => setStatus(null), 2600)
+  }
 
+  const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
+      await navigator.clipboard.writeText(careerShareText(career, game.peakOverall))
+      flash('Resumo copiado!')
+    } catch (error) {
       // Clipboard bloqueado (contexto não seguro, permissão negada). O card
       // segue na tela para print, que é como o compartilhamento acontece.
-      setCopied(false)
+      console.error('End: falha ao copiar o resumo para a área de transferência', error)
+      flash('Não foi possível copiar. Tente compartilhar a imagem.')
     }
+  }
+
+  const shareImage = async () => {
+    const node = cardRef.current
+    if (!node || working) return
+
+    setWorking(true)
+    const result = await shareCardImage(
+      node,
+      `craque-${career.config.name.trim().toLowerCase().replace(/\s+/g, '-') || 'carreira'}.png`,
+      t.shareBg,
+    )
+    setWorking(false)
+
+    if (result === 'shared') flash('Imagem compartilhada!')
+    if (result === 'downloaded') flash('Imagem salva nos seus downloads.')
+    if (result === 'failed') flash('Não foi possível gerar a imagem. Tente o resumo em texto.')
   }
 
   return (
@@ -139,79 +160,41 @@ export function End({ game }: { game: Game }) {
       </Display>
 
       <SectionLabel style={{ marginTop: scaled(28) }}>Card de compartilhamento</SectionLabel>
-      <div
-        style={{
-          marginTop: scaled(8),
-          background: t.shareBg,
-          color: t.text,
-          borderRadius: 12,
-          padding: `${scaled(28)} ${scaled(20)}`,
-          textAlign: 'center',
-          aspectRatio: '9 / 14',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-        }}
-      >
-        <div
-          style={{
-            fontSize: scaled(11),
-            fontWeight: 800,
-            letterSpacing: '0.1em',
-            textTransform: 'uppercase',
-            color: 'oklch(78% 0.17 50)',
-          }}
-        >
-          {label}
-        </div>
-        <Display size={44} style={{ marginTop: scaled(12), lineHeight: 1.05 }}>
-          {career.config.name}
-        </Display>
-        <div style={{ marginTop: scaled(4), fontSize: scaled(13), color: 'oklch(65% 0.02 70)' }}>
-          {POSITION_LABEL[career.config.position]} · OVR {game.peakOverall}
-        </div>
-
-        <div style={{ marginTop: scaled(24), display: 'flex', justifyContent: 'center', gap: scaled(20) }}>
-          {[
-            { value: totals.goals, label: 'gols' },
-            { value: totals.titles, label: 'títulos' },
-            { value: totals.ballonDOrs, label: 'bolas de ouro' },
-          ].map((item) => (
-            <div key={item.label}>
-              <Display size={22}>{item.value}</Display>
-              <div
-                style={{
-                  fontSize: scaled(8),
-                  color: 'oklch(65% 0.02 70)',
-                  textTransform: 'uppercase',
-                }}
-              >
-                {item.label}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div
-          style={{
-            marginTop: scaled(24),
-            fontSize: scaled(10),
-            letterSpacing: '0.1em',
-            color: 'oklch(50% 0.02 70)',
-          }}
-        >
-          CRAQUE
-        </div>
+      {/* A `ref` fica neste wrapper e não dentro do card: é exatamente este nó
+          que vira PNG, então o que estiver fora dele não entra na imagem. */}
+      <div ref={cardRef} style={{ marginTop: scaled(8) }}>
+        <ShareCard career={career} peakOverall={game.peakOverall} />
       </div>
 
-      {copied && (
-        <div style={{ marginTop: scaled(8), textAlign: 'center', fontSize: scaled(11), color: t.muted }}>
-          Copiado!
+      {status && (
+        <div
+          style={{
+            marginTop: scaled(8),
+            textAlign: 'center',
+            fontSize: scaled(11),
+            color: t.muted,
+          }}
+        >
+          {status}
         </div>
       )}
 
-      <GhostButton onClick={share} style={{ marginTop: scaled(16), padding: scaled(16) }}>
-        COMPARTILHAR
+      {/* Destacado entre os secundários, mas ainda um `GhostButton`: o botão
+          cheio da tela é JOGAR DE NOVO, e dois primários competiriam. */}
+      <GhostButton
+        onClick={shareImage}
+        disabled={working}
+        style={{
+          marginTop: scaled(16),
+          padding: scaled(16),
+          borderColor: t.accent,
+          color: t.goldText,
+        }}
+      >
+        {working ? 'GERANDO IMAGEM…' : 'COMPARTILHAR IMAGEM'}
+      </GhostButton>
+      <GhostButton onClick={copy} style={{ marginTop: scaled(8), padding: scaled(14) }}>
+        COPIAR RESUMO
       </GhostButton>
       <GhostButton onClick={game.openHistory} style={{ marginTop: scaled(8) }}>
         VER HISTÓRICO

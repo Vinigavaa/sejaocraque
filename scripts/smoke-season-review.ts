@@ -39,6 +39,7 @@ let state = startCareer({
   position,
   shirtNumber: 10,
   peakAttrs,
+  careerMode: 'classico',
 })
 
 console.log(`\nCARREIRA · seed ${SEED} · ${position} · auge ${overallFor(peakAttrs, position)}\n`)

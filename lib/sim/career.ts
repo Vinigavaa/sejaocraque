@@ -26,6 +26,13 @@ import {
 } from './national'
 import { leagueAbove, leagueBelow, leagueById, type League } from './data/leagues'
 import { clubLift } from './impact'
+import {
+  applyMorale,
+  driftBetweenSeasons,
+  reputationGain,
+  STARTING_MORALE,
+  type Morale,
+} from './morale'
 import { clamp, overallFor } from './positions'
 import { applyTraining, currentOverall, retirementAge, START_AGE } from './progression'
 import { createRng, pick, type Rng } from './rng'
@@ -50,6 +57,23 @@ import { ALL_ATTRS, type Attr, type Club, type PlayerAttrs, type Position } from
 
 export const FIRST_SEASON = 2026
 
+/**
+ * Como a carreira e jogada.
+ *
+ * - `classico` — a temporada inteira e resolvida de uma vez, e o jogador so
+ *   assiste ao jogo que a decidiu.
+ * - `jogoAJogo` — cada partida da liga e disputada minuto a minuto, com
+ *   decisoes que mudam placar, nota, moral e reputacao.
+ *
+ * Escolhido na criacao e gravado na configuracao — nao no estado — porque e
+ * uma propriedade da carreira, e nao algo que muda no meio dela. Trocar de
+ * modo no meio significaria misturar duas temporadas que nem sao apuradas do
+ * mesmo jeito.
+ */
+export const CAREER_MODES = ['classico', 'jogoAJogo'] as const
+
+export type CareerMode = (typeof CAREER_MODES)[number]
+
 export type CareerConfig = {
   seed: string
   name: string
@@ -59,6 +83,7 @@ export type CareerConfig = {
   shirtNumber: number
   /** Atributos vindos do draft — sao o **auge**, nao o valor atual. */
   peakAttrs: PlayerAttrs
+  careerMode: CareerMode
 }
 
 /** Quem nem entrou na chave da competicao. */
@@ -151,6 +176,8 @@ export type SeasonRecord = {
   awards: Award[]
   /** O jogo que decidiu a temporada. Null quando nao houve nenhum narravel. */
   decisive: DecisiveMatch | null
+  /** Confianca, treinador, elenco e reputacao ao fim da temporada. */
+  morale: Morale
 }
 
 export type AttrGrowth = { attr: Attr; from: number; to: number }
@@ -185,6 +212,11 @@ export type CareerState = {
   continentalId: string | null
   /** Destinos pedidos ao empresario. Vazio = procura em qualquer lugar. */
   preferences: TransferPreferences
+  /**
+   * O lado humano da carreira. Existe nos dois modos — no classico ela so se
+   * move ao fim de cada temporada; no Jogo a Jogo, a cada partida.
+   */
+  morale: Morale
 }
 
 export function startCareer(config: CareerConfig): CareerState {
@@ -205,6 +237,7 @@ export function startCareer(config: CareerConfig): CareerState {
     offers: [],
     continentalId: continentalSpotOfClub(club, league.id),
     preferences: [],
+    morale: STARTING_MORALE,
   }
 }
 
@@ -217,182 +250,40 @@ export function setPreferences(
 }
 
 /**
- * Chance de estrear em cada divisao, por faixa de potencial.
+ * As divisoes em que um brasileiro pode estrear, e o peso de cada uma.
  *
- * A versao anterior mandava todo mundo para a divisao mais baixa do pais, o
- * que zerava a diferenca entre o garoto que o mercado ja disputa e o que vai
- * ter que subir na raca. Aqui a joia tem chance real de estrear na primeira
- * divisao — e continua sendo chance, nao garantia: nem toda promessa estreia
- * em clube grande, e essa incerteza e metade da graca de comecar a carreira.
- *
- * Os pesos sao do tier 1 (primeira divisao) ao 3, e sao normalizados sobre as
- * divisoes que o pais de fato tem. So o Brasil tem tres; a maioria tem duas e
- * varios paises tem so uma.
+ * Metade Serie A, metade Serie B: a Serie C existe no jogo para acesso e
+ * rebaixamento, mas ninguem comeca a carreira nela.
  */
-const START_TIER_WEIGHTS: [minPotential: number, weights: [number, number, number]][] = [
-  [88, [55, 33, 12]],
-  [80, [30, 45, 25]],
-  [72, [12, 43, 45]],
-  [64, [4, 28, 68]],
-  [0, [1, 15, 84]],
-]
+const BR_START_TIERS = [1, 2]
 
 /**
  * Onde a historia comeca.
  *
- * A divisao sai do potencial do jogador — o teto que o draft entregou, nao o
- * OVR de agora. Um clube que aposta num garoto de 16 anos esta comprando o que
- * ele vai ser, e por isso o nivel atual entra so como desempate: entre dois
- * jogadores de mesmo teto, quem ja chega mais pronto pega o clube melhor.
+ * Sorteio limpo, sem peso: o clube sai do pais do jogador e todo clube elegivel
+ * tem exatamente a mesma chance. Potencial, posicao e nivel de estreia nao
+ * entram aqui — a promessa de teto alto pode muito bem comecar num clube
+ * pequeno e subir depois, que e o que o mercado do jogo ja resolve temporada a
+ * temporada.
  *
- * Idade nao diferencia ninguem aqui porque toda carreira comeca aos 16. Ela
- * participa de forma indireta, encolhendo o potencial no OVR de estreia.
+ * O Brasil e o unico caso especial: a divisao sai antes, 50% Serie A e 50%
+ * Serie B, e so entao o clube e sorteado de forma uniforme dentro dela. Sem
+ * isso a Serie B pesaria mais que a A so por ter mais clubes na lista.
  *
- * Quem nasce num pais sem liga mapeada comeca fora, e com a vida um pouco mais
- * dificil: nao ha clube da terra dele apostando primeiro, entao ele disputa
- * vaga com os locais em desvantagem. Isso vira `FOREIGN_HANDICAP` no sorteio
- * da divisao — antes esse jogador era barrado da primeira divisao por regra,
- * o que o prendia ao mesmo teto que a divisao mais baixa impunha aos outros.
+ * Quem nasce num pais sem liga mapeada estreia em qualquer clube do jogo, com
+ * a mesma chance para todos.
  */
-const FOREIGN_HANDICAP = 8
-
 function pickStartingClub(config: CareerConfig, rng: Rng): Club {
-  const potential = overallFor(config.peakAttrs, config.position)
-  const current = currentOverall(config.peakAttrs, config.position, START_AGE)
-
   const domestic = clubsByCountry(config.nationality)
-  const abroad = domestic.length === 0
-  const pool = abroad ? CLUBS : domestic
+  if (domestic.length === 0) return pick(rng, CLUBS)
 
-  const tier = pickStartingTier(pool, potential - (abroad ? FOREIGN_HANDICAP : 0), rng)
-  const entry = pool.filter((club) => leagueOf(club).tier === tier)
-
-  return pickClubByFit(entry.length > 0 ? entry : pool, {
-    potential,
-    current,
-    position: config.position,
-    rng,
-  })
-}
-
-/** Sorteia a divisao de estreia entre as que o pais tem. */
-function pickStartingTier(pool: Club[], potential: number, rng: Rng): number {
-  const available = [...new Set(pool.map((club) => leagueOf(club).tier))].sort()
-  if (available.length === 1) return available[0]
-
-  const row = START_TIER_WEIGHTS.find(([floor]) => potential >= floor)
-  const weights = row ? row[1] : START_TIER_WEIGHTS[START_TIER_WEIGHTS.length - 1][1]
-
-  // Normaliza sobre o que existe: num pais de duas divisoes, o peso da
-  // terceira nao pode simplesmente sumir — ele engorda a divisao mais baixa
-  // que o pais tem, que e onde aquele jogador entraria.
-  const totals = available.map((tier) => {
-    const own = weights[tier - 1] ?? 0
-    const isLowest = tier === available[available.length - 1]
-    const orphan = isLowest
-      ? weights.slice(available.length).reduce((sum, weight) => sum + weight, 0)
-      : 0
-
-    return own + orphan
-  })
-
-  const total = totals.reduce((sum, weight) => sum + weight, 0)
-  let draw = rng() * total
-
-  for (let index = 0; index < available.length; index++) {
-    draw -= totals[index]
-    if (draw <= 0) return available[index]
+  if (config.nationality === 'BR') {
+    const tier = pick(rng, BR_START_TIERS)
+    const entry = domestic.filter((club) => leagueOf(club).tier === tier)
+    if (entry.length > 0) return pick(rng, entry)
   }
 
-  return available[available.length - 1]
-}
-
-/**
- * Quanto a posicao desloca o alvo, em pontos de forca de clube.
- *
- * Clube grande aposta cedo em quem decide jogo: ponta, segundo atacante e
- * centroavante chegam prontos para a base de elite. Zagueiro e volante de 16
- * anos amadurecem mais devagar e costumam se formar um degrau abaixo, ainda
- * que o teto seja o mesmo. E um empurrao pequeno de proposito: muda a chance,
- * nao o destino.
- */
-const POSITION_PULL: Record<Position, number> = {
-  ZAG: -2,
-  VOL: -2,
-  ALA: -1,
-  MC: 0,
-  MEI: 1,
-  PON: 2,
-  SA: 2,
-  ATA: 2,
-}
-
-/**
- * Qual clube da divisao aposta nele.
- *
- * O alvo e uma **forca de clube**, nao uma posicao na lista ordenada: promessa
- * alta mira o topo da divisao, promessa modesta mira o meio ou o fim. Todo
- * clube da divisao entra no sorteio com peso que cai conforme se afasta do
- * alvo, entao nenhum clube e obrigatorio e nenhum e impossivel — o que sai
- * sempre faz sentido para o perfil, mas duas carreiras iguais no papel
- * estreiam em lugares diferentes.
- *
- * A versao anterior sorteava uniformemente dentro de uma janela de indices em
- * torno do alvo. Como o alvo de quem tem potencial alto era sempre a ponta da
- * lista, a janela virava "os seis gigantes" e a variedade acabava ali; pior,
- * clubes de forca empatada eram ordenados pela ordem do arquivo, o que dava
- * vantagem estavel a quem estava listado antes. O peso continuo resolve os
- * dois problemas: empate de forca vira empate de chance.
- *
- * O que entra na conta:
- *
- * - **potencial** — manda, e o que o clube esta comprando;
- * - **nivel atual** — desempata com um quinto do peso: entre dois jogadores de
- *   mesmo teto, quem ja chega mais pronto pega o clube melhor;
- * - **idade** — entra dentro de `current`, que encolhe o auge para o OVR de
- *   estreia aos 16;
- * - **posicao** — desloca o alvo por `POSITION_PULL`;
- * - **reputacao/nivel do clube** — e a propria `strength`, a escala global do
- *   jogo, comparada contra o alvo.
- */
-function pickClubByFit(
-  clubs: Club[],
-  input: { potential: number; current: number; position: Position; rng: Rng },
-): Club {
-  if (clubs.length === 1) return clubs[0]
-
-  const strengths = clubs.map((club) => club.strength)
-  const floor = Math.min(...strengths)
-  const ceiling = Math.max(...strengths)
-  if (ceiling === floor) return pick(input.rng, clubs)
-
-  // O potencial manda; o nivel de estreia desempata com um quinto do peso.
-  const grade = clamp((input.potential * 0.8 + input.current * 0.2 - 45) / 45, 0, 1)
-  const target = clamp(
-    floor + grade * (ceiling - floor) + POSITION_PULL[input.position],
-    floor,
-    ceiling,
-  )
-
-  // A largura acompanha a divisao: uma liga homogenea concentra mais, uma liga
-  // desigual espalha mais. O piso evita que ligas muito planas virem sorteio de
-  // um clube so.
-  const width = Math.max(4, (ceiling - floor) * 0.35)
-
-  const weights = clubs.map((club) => {
-    const distance = (club.strength - target) / width
-    return Math.exp(-distance * distance)
-  })
-
-  const total = weights.reduce((sum, weight) => sum + weight, 0)
-  let draw = input.rng() * total
-
-  for (let index = 0; index < clubs.length; index++) {
-    draw -= weights[index]
-    if (draw <= 0) return clubs[index]
-  }
-
-  return clubs[clubs.length - 1]
+  return pick(rng, domestic)
 }
 
 export type SeasonResult = {
@@ -402,15 +293,33 @@ export type SeasonResult = {
 }
 
 /**
+ * A liga ja disputada, quando ela nao foi simulada aqui.
+ *
+ * E por esta porta que o modo Jogo a Jogo entrega o campeonato: as partidas ja
+ * aconteceram uma a uma, e o que chega e o mesmo par que `simulateLeague` e
+ * `simulatePlayerSeason` produziriam. Tudo o que vem **depois** da liga —
+ * copas, selecao, premios, mercado, evolucao — continua sendo o mesmo codigo
+ * nos dois modos, e essa e a razao de o parametro existir em vez de uma
+ * segunda `playSeason`.
+ */
+export type PlayedLeague = {
+  stats: PlayerSeasonStats
+  outcome: LeagueOutcome
+  /** Moral acumulada partida a partida ao longo da liga. */
+  morale: Morale
+}
+
+/**
  * Joga uma temporada inteira e devolve o novo estado.
  *
- * `trainingFocus` e a unica decisao do jogador entre um ano e outro. O ganho
+ * `trainingFocus` e a decisao do jogador entre um ano e outro. O ganho
  * e aplicado no fim, entao a escolha paga na temporada seguinte — treinar nao
  * conserta o ano que ja esta acontecendo.
  */
 export function playSeason(
   state: CareerState,
   trainingFocus: Attr | null,
+  playedLeague?: PlayedLeague,
 ): SeasonResult {
   if (state.retired) {
     throw new Error('playSeason: carreira ja encerrada')
@@ -427,24 +336,28 @@ export function playSeason(
   // A producao do jogador e apurada antes da tabela: a tabela agora depende de
   // quanto ele jogou. `simulatePlayerSeason` nao depende da tabela — so do
   // clube, da media da liga e do total de partidas.
-  const stats = simulatePlayerSeason(
-    {
-      overall,
-      position: state.config.position,
-      club,
-      leagueAverageStrength: averageStrength(clubs),
-      totalMatches,
-    },
-    rng,
-  )
+  const stats =
+    playedLeague?.stats ??
+    simulatePlayerSeason(
+      {
+        overall,
+        position: state.config.position,
+        club,
+        leagueAverageStrength: averageStrength(clubs),
+        totalMatches,
+      },
+      rng,
+    )
 
-  const participation = stats.matches / totalMatches
+  const participation = totalMatches > 0 ? stats.matches / totalMatches : 0
   const leagueLift = clubLift(overall, club.strength, participation)
 
-  const leagueOutcome = simulateLeague(league, rng, clubs, {
-    clubId: club.id,
-    amount: leagueLift,
-  })
+  const leagueOutcome =
+    playedLeague?.outcome ??
+    simulateLeague(league, rng, clubs, {
+      clubId: club.id,
+      amount: leagueLift,
+    })
 
   const tablePosition = positionInTable(leagueOutcome, club.id)
   const promoted = leagueOutcome.promotedIds.includes(club.id)
@@ -471,8 +384,18 @@ export function playSeason(
     ? applyTraining(state.peakAttrs, trainingFocus, state.age)
     : state.peakAttrs
 
+  const moraleDuringSeason = playedLeague?.morale ?? state.morale
+
   const national = playNationalSeason(
-    { overall, position: state.config.position, nationality: state.config.nationality },
+    {
+      overall,
+      position: state.config.position,
+      nationality: state.config.nationality,
+      // Nome pesa na convocacao: o tecnico da selecao le a temporada inteira,
+      // nao so o OVR. Vale ate tres pontos — empurra quem esta na bolha, nao
+      // convoca quem esta longe do nivel.
+      callUpBonus: moraleDuringSeason.reputation * 0.03,
+    },
     state.seasonIndex,
     rng,
   )
@@ -491,8 +414,41 @@ export function playSeason(
     rng,
   )
 
+  const awards = resolveAwards(
+    seasonAwardsInput({
+      stats,
+      position: state.config.position,
+      leagueAverage: averageStrength(clubs),
+      league,
+      champion: leagueOutcome.championId === club.id,
+      cups,
+      national,
+      decisive,
+      totalMatches,
+      clubLift: leagueLift,
+    }),
+    rng,
+  )
+
+  // A reputacao ganha no ano entra antes de o registro ser fechado: e ela que
+  // a tela de resumo mostra e que o mercado le na virada da temporada.
+  const morale = applyMorale(moraleDuringSeason, {
+    reputation: reputationGain({
+      leagueTier: league.tier,
+      clubStrength: club.strength,
+      goals: stats.goals,
+      assists: stats.assists,
+      matches: stats.matches,
+      champion: leagueOutcome.championId === club.id,
+      titles: cups.filter((run) => run.won).length + (national?.tournament?.won ? 1 : 0),
+      awards: awards.length,
+      calledUp: national !== null,
+    }),
+  })
+
   const record: SeasonRecord = {
     label: seasonLabel(state.seasonIndex),
+    morale,
     age: state.age,
     clubId: club.id,
     leagueId: league.id,
@@ -509,21 +465,7 @@ export function playSeason(
     cups,
     national,
     decisive,
-    awards: resolveAwards(
-      seasonAwardsInput({
-        stats,
-        position: state.config.position,
-        leagueAverage: averageStrength(clubs),
-        league,
-        champion: leagueOutcome.championId === club.id,
-        cups,
-        national,
-        decisive,
-        totalMatches,
-        clubLift: leagueLift,
-      }),
-      rng,
-    ),
+    awards,
   }
 
   const age = state.age + 1
@@ -537,6 +479,9 @@ export function playSeason(
       seasonIndex: state.seasonIndex + 1,
       seasons: [...state.seasons, record],
       retired: age > state.retiresAt,
+      // Ferias e pre-temporada desfazem parte do que ficou — para os dois
+      // lados. Sem isso um comeco ruim aos 17 marcaria a carreira inteira.
+      morale: driftBetweenSeasons(morale),
       // O clube nunca muda aqui. Trocar de time e decisao do jogador, e a
       // unica porta para isso e `resolveTransfer`.
       leagueId: leagueAfterSeason(league, promoted, relegated).id,
@@ -548,7 +493,7 @@ export function playSeason(
           club,
           stats,
           progress: nextOverall - overall,
-          reputation: reputationOf(state),
+          reputation: reputationOf(state) + morale.reputation / 8,
           promoted,
           relegated,
           seasonsAtClub: seasonsAtClub(state, club.id),
@@ -702,7 +647,7 @@ function leagueAfterSeason(
  * so simula a liga do jogador, e a copa nacional reune o pais inteiro de
  * qualquer forma.
  */
-function fieldOf(league: League, club: Club): Club[] {
+export function fieldOf(league: League, club: Club): Club[] {
   const clubs = clubsInLeague(league.id)
 
   if (clubs.some((other) => other.id === club.id)) return clubs
@@ -721,6 +666,10 @@ function fieldOf(league: League, club: Club): Club[] {
  * Titulo, premio individual e convocacao sao o que um clube de fora enxerga
  * de longe — mais do que a nota da ultima temporada. Bola de Ouro pesa mais
  * que titulo porque e o que faz um clube pagar acima do nivel atual.
+ *
+ * Isto conta so o **historico**. O peso do momento — o que a imprensa e os
+ * olheiros estao vendo agora — vem de `morale.reputation`, somado por quem
+ * chama, para que as duas coisas continuem separaveis.
  */
 function reputationOf(state: CareerState): number {
   let reputation = 0

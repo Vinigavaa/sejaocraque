@@ -35,6 +35,7 @@ for (let career = 0; career < CAREERS; career++) {
     position: 'ATA',
     shirtNumber: 9,
     peakAttrs: PEAK,
+    careerMode: 'classico',
   })
 
   while (!state.retired) {

@@ -88,6 +88,7 @@ function runCareer(
     position,
     shirtNumber: 10,
     peakAttrs: attrsFor(peak, position, rng),
+    careerMode: 'classico',
   })
 
   state = setPreferences(state, preferences)
@@ -204,6 +205,7 @@ for (let index = 0; index < CAREERS; index++) {
     position: 'ATA',
     shirtNumber: 10,
     peakAttrs: attrsFor(88, 'ATA', rng),
+    careerMode: 'classico',
   })
   state = setPreferences(state, ['it-1'])
 

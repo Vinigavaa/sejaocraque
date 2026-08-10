@@ -11,6 +11,7 @@ import { Draft } from '@/components/screens/Draft'
 import { End } from '@/components/screens/End'
 import { History } from '@/components/screens/History'
 import { Home } from '@/components/screens/Home'
+import { Live } from '@/components/screens/Live'
 import { LiveMatch } from '@/components/screens/LiveMatch'
 import { Reveal } from '@/components/screens/Reveal'
 import { SeasonReview } from '@/components/screens/SeasonReview'
@@ -30,6 +31,7 @@ export default function Page() {
           {game.screen === 'reveal' && <Reveal game={game} />}
           {game.screen === 'club' && <ClubStart game={game} />}
           {game.screen === 'match' && <LiveMatch game={game} />}
+          {game.screen === 'live' && <Live game={game} />}
           {game.screen === 'review' && <SeasonReview game={game} />}
           {game.screen === 'career' && <Career game={game} />}
           {game.screen === 'end' && <End game={game} />}

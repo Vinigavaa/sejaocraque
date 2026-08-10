@@ -1,17 +1,22 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { Award } from '@/lib/sim/awards'
 import {
+  fieldOf,
   playSeason,
   resolveTransfer,
+  seasonLabel,
   setPreferences,
   startCareer,
+  type CareerMode,
   type CareerState,
+  type PlayedLeague,
   type SeasonRecord,
 } from '@/lib/sim/career'
 import { clubById } from '@/lib/sim/data/clubs'
+import { leagueById } from '@/lib/sim/data/leagues'
 import { LEGENDS } from '@/lib/sim/data/legends'
 import {
   attrsFromPicks,
@@ -23,15 +28,38 @@ import {
   type DraftMode,
   type DraftState,
 } from '@/lib/sim/draft'
-import { buildTimeline } from '@/lib/sim/liveMatch'
+import {
+  advanceLiveMatch,
+  buildTimeline,
+  chooseLiveOption,
+  finishLiveMatch,
+  moraleAfterMatch,
+  simulateRestOfMatch,
+  startLiveMatch,
+  type LiveMatchState,
+} from '@/lib/sim/liveMatch'
+import {
+  completeRound,
+  finishMatchdaySeason,
+  isSeasonOver,
+  nextFixture,
+  setupForNext,
+  startMatchdaySeason,
+  type MatchdaySeason,
+} from '@/lib/sim/matchday'
 import { overallByPosition, overallFor } from '@/lib/sim/positions'
-import { convertsPenalty, hasPenaltyMoment } from '@/lib/sim/penalty'
 import { applyTraining, currentOverall } from '@/lib/sim/progression'
-import { createRng, randomSeed } from '@/lib/sim/rng'
-import type { LeagueOutcome } from '@/lib/sim/season'
+import { createRng, randomSeed, type Rng } from '@/lib/sim/rng'
+import { averageStrength, type LeagueOutcome } from '@/lib/sim/season'
 import type { TransferPreferences } from '@/lib/sim/transfers'
 import { ALL_ATTRS, type Attr, type Position } from '@/lib/sim/types'
-import { headlinesFor, transferHeadline } from './headlines'
+import {
+  newsFromMatch,
+  newsFromSeason,
+  transferNews,
+  type NewsContext,
+  type NewsItem,
+} from './news'
 
 export type Screen =
   | 'home'
@@ -40,6 +68,7 @@ export type Screen =
   | 'reveal'
   | 'club'
   | 'match'
+  | 'live'
   | 'review'
   | 'career'
   | 'end'
@@ -47,7 +76,6 @@ export type Screen =
   | 'agent'
 
 export type Overlay =
-  | { type: 'penalty'; stage: 'choose' | 'result'; scored: boolean }
   | { type: 'award'; award: Award }
   | { type: 'transfer'; clubId: string }
 
@@ -66,7 +94,8 @@ type Pending = {
   retired: boolean
 }
 
-const MAX_HEADLINES = 6
+/** O feed guarda uma temporada inteira de acontecimentos, e não mais que isso. */
+const MAX_NEWS = 40
 
 export function useGame() {
   const [screen, setScreen] = useState<Screen>('home')
@@ -77,6 +106,7 @@ export function useGame() {
   const [position, setPosition] = useState<Position | null>(null)
   const [shirtNumber, setShirtNumber] = useState<number | null>(null)
   const [mode, setMode] = useState<DraftMode | null>(null)
+  const [careerMode, setCareerMode] = useState<CareerMode | null>(null)
 
   // — draft
   const [draft, setDraft] = useState<DraftState | null>(null)
@@ -86,10 +116,34 @@ export function useGame() {
   const [career, setCareer] = useState<CareerState | null>(null)
   const [lastRecord, setLastRecord] = useState<SeasonRecord | null>(null)
   const [lastTable, setLastTable] = useState<LeagueOutcome | null>(null)
-  const [headlines, setHeadlines] = useState<string[]>([])
   const [overlayQueue, setOverlayQueue] = useState<Overlay[]>([])
   const [trainingFocus, setTrainingFocus] = useState<Attr | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
+
+  /**
+   * Se o aviso do empresário está na tela.
+   *
+   * Uma vez por temporada, e só no modo Clássico: no Jogo a Jogo o jogador
+   * passa pela tela de carreira a cada rodada e o botão já se apresenta
+   * sozinho. Reaparece a cada temporada nova, porque é a cada ano que a janela
+   * de transferências volta a valer.
+   */
+  const [agentHint, setAgentHint] = useState(false)
+
+  // — modo Jogo a Jogo
+  const [matchday, setMatchday] = useState<MatchdaySeason | null>(null)
+  const [live, setLive] = useState<LiveMatchState | null>(null)
+  const [news, setNews] = useState<NewsItem[]>([])
+
+  /**
+   * O sorteio da partida em curso.
+   *
+   * Fica num ref, e nao no estado, porque um gerador e mutavel por natureza:
+   * cada chamada muda o proximo numero. Guardado como estado ele seria
+   * duplicado a cada render do React 18 em modo estrito, e a mesma decisao
+   * daria resultados diferentes dependendo de quantas vezes a tela desenhou.
+   */
+  const matchRng = useRef<Rng | null>(null)
 
   /**
    * De onde o histórico foi aberto. Ele é um desvio, não um passo do fluxo:
@@ -119,7 +173,12 @@ export function useGame() {
   }, [career, finalPosition, peakOverall])
 
   const canStartDraft =
-    name.trim().length > 0 && !!nationality && !!position && !!shirtNumber && !!mode
+    name.trim().length > 0 &&
+    !!nationality &&
+    !!position &&
+    !!shirtNumber &&
+    !!mode &&
+    !!careerMode
 
   const beginDraft = useCallback(() => {
     if (!canStartDraft || !mode) return
@@ -166,12 +225,20 @@ export function useGame() {
         position: finalPosition,
         shirtNumber,
         peakAttrs,
+        // O modo e escolhido na criacao e nao muda mais: ele decide como cada
+        // temporada e apurada, e trocar no meio misturaria duas apuracoes.
+        careerMode: careerMode ?? 'classico',
       }),
     )
     setScreen('club')
-  }, [peakAttrs, finalPosition, nationality, shirtNumber, draft, name])
+  }, [peakAttrs, finalPosition, nationality, shirtNumber, draft, name, careerMode])
 
-  const beginCareer = useCallback(() => setScreen('career'), [])
+  const beginCareer = useCallback(() => {
+    setAgentHint(career?.config.careerMode === 'classico')
+    setScreen('career')
+  }, [career])
+
+  const dismissAgentHint = useCallback(() => setAgentHint(false), [])
 
   /** Melhor foco de treino, usado quando o jogador não escolhe nenhum. */
   const suggestedFocus = useCallback(
@@ -194,62 +261,245 @@ export function useGame() {
     [],
   )
 
+  /** Fecha a temporada e abre o resumo. */
+  const openReview = useCallback(() => {
+    setPending((current) => (current ? { ...current, stage: 'post' } : current))
+    setScreen('review')
+  }, [])
+
   /**
-   * O pênalti é o único momento que muda um número da temporada, então ele é
-   * resolvido antes do resumo — senão o resumo mostraria um gol a menos.
+   * O contexto que a imprensa usa para dimensionar uma notícia.
+   *
+   * Sai sempre do estado atual da carreira — divisão, clube, reputação, idade
+   * — porque é exatamente isso que separa uma nota no jornal da cidade de uma
+   * chamada internacional.
    */
-  const openPenaltyOrReview = useCallback(
-    (state: CareerState, matches: number) => {
-      const rng = createRng(`${state.config.seed}:momento:${state.seasonIndex - 1}`)
+  const newsContext = useCallback(
+    (state: CareerState): NewsContext => {
+      const club = clubById(state.clubId)
+      const league = leagueById(state.leagueId)
 
-      if (hasPenaltyMoment(state.config.position, matches, rng)) {
-        setOverlayQueue([{ type: 'penalty', stage: 'choose', scored: false }])
-        return
+      return {
+        playerName: state.config.name,
+        clubName: club?.name ?? 'clube',
+        leagueName: league?.name ?? 'campeonato',
+        leagueTier: league?.tier ?? 3,
+        clubStrength: club?.strength ?? 60,
+        reputation: state.morale.reputation,
+        age: state.age,
+        overall: currentOverall(state.peakAttrs, state.config.position, state.age),
+        position: state.config.position,
+        season: seasonLabel(state.seasonIndex),
       }
-
-      setPending((current) => (current ? { ...current, stage: 'post' } : current))
-      setScreen('review')
     },
     [],
   )
 
-  const advance = useCallback(() => {
-    if (!career || career.retired) return
+  const pushNews = useCallback((items: NewsItem[]) => {
+    if (items.length === 0) return
+    setNews((current) => [...items, ...current].slice(0, MAX_NEWS))
+  }, [])
 
-    const focus = trainingFocus ?? suggestedFocus(career)
-    const result = playSeason(career, focus)
-    const record = result.record
+  /**
+   * Fecha a temporada.
+   *
+   * `playedLeague` só vem preenchido no modo Jogo a Jogo, e carrega a liga que
+   * já foi disputada partida a partida. Do fechamento em diante — copas,
+   * seleção, prêmios, mercado, evolução — os dois modos correm pelo mesmo
+   * caminho, que é o que mantém as duas carreiras comparáveis.
+   */
+  const closeSeason = useCallback(
+    (playedLeague?: PlayedLeague) => {
+      if (!career || career.retired) return
 
-    const post: Overlay[] = record.awards.map((award) => ({ type: 'award', award }))
+      const focus = trainingFocus ?? suggestedFocus(career)
+      const result = playSeason(career, focus, playedLeague)
+      const record = result.record
 
-    // Uma proposta por vez mantém a decisão legível.
-    const offer = result.state.offers[0]
-    if (offer && !result.state.retired) {
-      post.push({ type: 'transfer', clubId: offer.clubId })
+      const post: Overlay[] = record.awards.map((award) => ({ type: 'award', award }))
+
+      // Uma proposta por vez mantém a decisão legível.
+      const offer = result.state.offers[0]
+      if (offer && !result.state.retired) {
+        post.push({ type: 'transfer', clubId: offer.clubId })
+      }
+
+      setCareer(result.state)
+      setLastRecord(record)
+      setLastTable(result.leagueOutcome)
+      pushNews(
+        newsFromSeason(
+          { ...newsContext(career), season: record.label },
+          record,
+          createRng(`${career.config.seed}:imprensa:${record.label}`),
+        ),
+      )
+      setMatchday(null)
+      setTrainingFocus(null)
+      setPending({ stage: 'pre', post, retired: result.state.retired })
+
+      // No modo Jogo a Jogo a última rodada já foi disputada pelo jogador —
+      // reexibi-la como "o jogo que decidiu a temporada" seria mostrar de novo
+      // o que ele acabou de jogar. Final de copa continua valendo: essas o
+      // motor resolve fora do calendário da liga.
+      const worthWatching =
+        record.decisive &&
+        (career.config.careerMode === 'classico' || record.decisive.stage === 'Final')
+
+      if (worthWatching) {
+        setScreen('match')
+        return
+      }
+
+      openReview()
+    },
+    [career, trainingFocus, suggestedFocus, openReview, newsContext, pushNews],
+  )
+
+  const advance = useCallback(() => closeSeason(), [closeSeason])
+
+  /** O sorteio da rodada: o mesmo para a partida do jogador e para as outras. */
+  const roundRng = useCallback(
+    (state: CareerState, roundIndex: number): Rng =>
+      createRng(`${state.config.seed}:rodada:${state.seasonIndex}:${roundIndex}`),
+    [],
+  )
+
+  /**
+   * Abre a próxima partida da temporada.
+   *
+   * Rodadas em que o clube está de folga — o que acontece em liga de número
+   * ímpar de clubes — correm sozinhas até aparecer um jogo dele. Sem isso o
+   * botão de "próximo jogo" não faria nada em algumas rodadas.
+   */
+  const playNextMatch = useCallback(() => {
+    if (!career || career.retired || career.config.careerMode !== 'jogoAJogo') return
+
+    const club = clubById(career.clubId)
+    const league = leagueById(career.leagueId)
+    if (!club || !league) return
+
+    const clubs = fieldOf(league, club)
+
+    let season =
+      matchday ??
+      startMatchdaySeason({
+        league,
+        clubs,
+        clubId: club.id,
+        seed: career.config.seed,
+        seasonIndex: career.seasonIndex,
+      })
+
+    while (!isSeasonOver(season) && !nextFixture(season)) {
+      season = completeRound(season, null, roundRng(career, season.roundIndex))
     }
 
-    setCareer(result.state)
-    setLastRecord(record)
-    setLastTable(result.leagueOutcome)
-    setHeadlines((current) =>
-      [...headlinesFor(record, career.config.name), ...current].slice(0, MAX_HEADLINES),
-    )
-    setTrainingFocus(null)
-    setPending({ stage: 'pre', post, retired: result.state.retired })
-
-    if (record.decisive) {
-      setScreen('match')
+    if (isSeasonOver(season)) {
+      const { outcome, stats } = finishMatchdaySeason(season, league)
+      setMatchday(season)
+      closeSeason({ outcome, stats, morale: career.morale })
       return
     }
 
-    openPenaltyOrReview(result.state, record.stats.matches)
-  }, [career, trainingFocus, suggestedFocus, openPenaltyOrReview])
+    const setup = setupForNext(
+      season,
+      {
+        name: career.config.name,
+        position: career.config.position,
+        overall: currentOverall(career.peakAttrs, career.config.position, career.age),
+        attrs: career.peakAttrs,
+      },
+      club,
+      league.name,
+      averageStrength(clubs),
+    )
+
+    if (!setup) return
+
+    matchRng.current = createRng(
+      `${career.config.seed}:partida:${career.seasonIndex}:${season.roundIndex}`,
+    )
+
+    setMatchday(season)
+    setLive(startLiveMatch(setup, career.morale, matchRng.current))
+    setScreen('live')
+  }, [career, matchday, roundRng, closeSeason])
+
+  const advanceLive = useCallback(() => {
+    const rng = matchRng.current
+    if (!rng) return
+    setLive((state) => (state ? advanceLiveMatch(state, rng) : state))
+  }, [])
+
+  const chooseLive = useCallback((index: number) => {
+    const rng = matchRng.current
+    if (!rng) return
+    setLive((state) => (state ? chooseLiveOption(state, index, rng) : state))
+  }, [])
+
+  /** Simula o resto da partida. As consequências continuam valendo. */
+  const skipLive = useCallback(() => {
+    const rng = matchRng.current
+    if (!rng) return
+    setLive((state) => (state ? simulateRestOfMatch(state, rng) : state))
+  }, [])
+
+  /**
+   * Apito final: grava a partida na tabela, na moral e na imprensa.
+   *
+   * É aqui, e não durante a partida, que a carreira muda — uma partida
+   * abandonada no meio do caminho não pode deixar metade das consequências
+   * aplicadas.
+   */
+  const finishLive = useCallback(() => {
+    if (!career || !live || !matchday) return
+
+    const done = finishLiveMatch(live)
+    const league = leagueById(career.leagueId)
+    if (!league) return
+
+    const roundIndex = matchday.roundIndex
+
+    const season = completeRound(
+      matchday,
+      {
+        teamGoals: done.teamGoals,
+        opponentGoals: done.opponentGoals,
+        player: done.player,
+      },
+      roundRng(career, roundIndex),
+    )
+
+    const morale = moraleAfterMatch(done)
+    const updated = { ...career, morale }
+
+    setCareer(updated)
+    setMatchday(season)
+    setLive(null)
+
+    pushNews(
+      newsFromMatch(
+        newsContext(updated),
+        season.log,
+        createRng(`${career.config.seed}:imprensa:${career.seasonIndex}:${roundIndex}`),
+      ),
+    )
+
+    if (isSeasonOver(season)) {
+      const { outcome, stats } = finishMatchdaySeason(season, league)
+      closeSeason({ outcome, stats, morale })
+      return
+    }
+
+    setScreen('career')
+  }, [career, live, matchday, roundRng, pushNews, newsContext, closeSeason])
 
   /** Fim da narração do jogo decisivo. */
   const finishMatch = useCallback(() => {
     if (!career || !lastRecord) return
-    openPenaltyOrReview(career, lastRecord.stats.matches)
-  }, [career, lastRecord, openPenaltyOrReview])
+    openReview()
+  }, [career, lastRecord, openReview])
 
   /**
    * Fim do resumo. Prêmio e proposta entram agora, sobre a tela de carreira —
@@ -262,7 +512,11 @@ export function useGame() {
     setPending(null)
     setOverlayQueue(retired ? post.filter((item) => item.type === 'award') : post)
     setScreen(retired ? 'end' : 'career')
-  }, [pending])
+
+    // O ano virou: a janela de transferências volta a valer, e o aviso do
+    // empresário volta com ela.
+    setAgentHint(!retired && career?.config.careerMode === 'classico')
+  }, [pending, career])
 
   const overlay = overlayQueue[0] ?? null
 
@@ -276,34 +530,6 @@ export function useGame() {
       createRng(`${career.config.seed}:narracao:${lastRecord.label}`),
     )
   }, [career, lastRecord])
-
-  const kickPenalty = useCallback(() => {
-    if (!career || overlay?.type !== 'penalty') return
-
-    const rng = createRng(`${career.config.seed}:penalti:${career.seasonIndex}`)
-    const scored = convertsPenalty(career.peakAttrs, career.age, rng)
-
-    // O gol conta de verdade: entra na temporada que acabou de ser jogada.
-    if (scored) {
-      setCareer((state) =>
-        state
-          ? {
-              ...state,
-              seasons: state.seasons.map((season, index) =>
-                index === state.seasons.length - 1
-                  ? { ...season, stats: { ...season.stats, goals: season.stats.goals + 1 } }
-                  : season,
-              ),
-            }
-          : state,
-      )
-      setLastRecord((record) =>
-        record ? { ...record, stats: { ...record.stats, goals: record.stats.goals + 1 } } : record,
-      )
-    }
-
-    setOverlayQueue(([, ...rest]) => [{ type: 'penalty', stage: 'result', scored }, ...rest])
-  }, [career, overlay])
 
   /**
    * Fechar o último overlay da etapa `pre` é o que abre o resumo. Fica aqui e
@@ -335,13 +561,17 @@ export function useGame() {
     setCareer(resolveTransfer(career, overlay.clubId))
 
     if (club) {
-      setHeadlines((current) =>
-        [transferHeadline(career.config.name, club.name), ...current].slice(0, MAX_HEADLINES),
-      )
+      pushNews([
+        transferNews(
+          newsContext(career),
+          club.name,
+          createRng(`${career.config.seed}:mercado:${career.seasonIndex}`),
+        ),
+      ])
     }
 
     closeOverlay()
-  }, [career, overlay, closeOverlay])
+  }, [career, overlay, closeOverlay, newsContext, pushNews])
 
   const declineTransfer = useCallback(() => {
     if (!career) return
@@ -383,7 +613,10 @@ export function useGame() {
 
   const closeHistory = useCallback(() => setScreen(historyOrigin), [historyOrigin])
 
-  const openAgent = useCallback(() => setScreen('agent'), [])
+  const openAgent = useCallback(() => {
+    setAgentHint(false)
+    setScreen('agent')
+  }, [])
   const closeAgent = useCallback(() => setScreen('career'), [])
 
   /**
@@ -403,16 +636,21 @@ export function useGame() {
     setPosition(null)
     setShirtNumber(null)
     setMode(null)
+    setCareerMode(null)
     setDraft(null)
     setFinalPosition(null)
     setCareer(null)
     setLastRecord(null)
     setLastTable(null)
-    setHeadlines([])
     setOverlayQueue([])
     setTrainingFocus(null)
     setPending(null)
     setHistoryOrigin('career')
+    setAgentHint(false)
+    setMatchday(null)
+    setLive(null)
+    setNews([])
+    matchRng.current = null
   }, [])
 
   return {
@@ -429,6 +667,8 @@ export function useGame() {
     setShirtNumber,
     mode,
     setMode,
+    careerMode,
+    setCareerMode,
     canStartDraft,
     beginDraft,
 
@@ -448,10 +688,17 @@ export function useGame() {
     career,
     lastRecord,
     lastTable,
-    headlines,
     trainingFocus,
     setTrainingFocus,
     advance,
+    news,
+    matchday,
+    live,
+    playNextMatch,
+    advanceLive,
+    chooseLive,
+    skipLive,
+    finishLive,
     decisiveTimeline,
     finishMatch,
     finishReview,
@@ -459,12 +706,14 @@ export function useGame() {
     openHistory,
     closeHistory,
 
+
     openAgent,
     closeAgent,
+    agentHint,
+    dismissAgentHint,
     updatePreferences,
 
     overlay,
-    kickPenalty,
     closeOverlay,
     acceptTransfer,
     declineTransfer,

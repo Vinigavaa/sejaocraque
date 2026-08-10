@@ -61,7 +61,3 @@ export function headlinesFor(record: SeasonRecord, playerName: string): string[]
 
   return out
 }
-
-export function transferHeadline(playerName: string, clubName: string): string {
-  return `${playerName} assina com o ${clubName}`
-}

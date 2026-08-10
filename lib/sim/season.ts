@@ -110,7 +110,23 @@ export function simulateLeague(
     lastRound = played
   }
 
-  const standings = [...table.values()].sort(compareStandings)
+  return finalizeLeague(league, [...table.values()], lastRound)
+}
+
+/**
+ * Fecha a tabela: ordena, aplica acesso e rebaixamento e nomeia o campeao.
+ *
+ * Existe separado de `simulateLeague` porque o modo Jogo a Jogo monta a mesma
+ * tabela rodada a rodada, em vez de de uma vez — e as duas precisam terminar
+ * exatamente com as mesmas regras, senao o campeao de um modo nao seria o
+ * campeao do outro.
+ */
+export function finalizeLeague(
+  league: League,
+  rows: Standing[],
+  lastRound: LeagueFixture[],
+): LeagueOutcome {
+  const standings = [...rows].sort(compareStandings)
   const promoted = league.promotionSpots > 0 ? standings.slice(0, league.promotionSpots) : []
   const relegated =
     league.relegationSpots > 0 ? standings.slice(-league.relegationSpots) : []
@@ -184,7 +200,7 @@ export function buildSchedule(clubs: Club[], twice: boolean): [Club, Club][][] {
  */
 const FORM_SPREAD = 0.075
 
-function seasonForm(clubs: Club[], rng: Rng, boost?: ClubBoost): Map<string, number> {
+export function seasonForm(clubs: Club[], rng: Rng, boost?: ClubBoost): Map<string, number> {
   return new Map(
     clubs.map((club) => [
       club.id,
@@ -212,14 +228,9 @@ export function simulateMatch(
   awayStrength: number,
   rng: Rng,
 ): [number, number] {
-  // Dividido pela metade em cada lado: o favorito faz mais e sofre menos,
-  // sem inflar o total de gols da partida.
-  const edge = Math.exp((homeStrength - awayStrength) / STRENGTH_SCALE / 2)
+  const [home, away] = goalExpectation(homeStrength, awayStrength)
 
-  return [
-    poisson(rng, clamp(BASE_GOALS * edge * HOME_ADVANTAGE, 0.15, 5)),
-    poisson(rng, clamp(BASE_GOALS / edge, 0.15, 5)),
-  ]
+  return [poisson(rng, home), poisson(rng, away)]
 }
 
 /**
@@ -236,6 +247,49 @@ const OUTPUT_PER_GAME: Record<Position, { goals: number; assists: number }> = {
   PON: { goals: 0.34, assists: 0.28 },
   SA: { goals: 0.44, assists: 0.24 },
   ATA: { goals: 0.54, assists: 0.14 },
+}
+
+export { OUTPUT_PER_GAME }
+
+/**
+ * Gols e assistencias esperados do jogador **numa** partida, em valor
+ * continuo.
+ *
+ * `playerOutput` sorteia inteiros e por isso nao serve para o modo Jogo a
+ * Jogo, onde o numero esperado precisa ser subtraido do placar do time antes
+ * de a partida comecar — do contrario o que o jogador produz nas decisoes
+ * seria somado em cima do que a simulacao ja tinha creditado a ele, e todo
+ * jogo terminaria goleada.
+ */
+export function expectedOutputPerMatch(input: {
+  overall: number
+  position: Position
+  club: Club
+  leagueAverageStrength: number
+}): { goals: number; assists: number } {
+  const quality = Math.pow(input.overall / 78, 2.2)
+  const support = Math.pow(input.club.strength / input.leagueAverageStrength, 0.7)
+  const output = OUTPUT_PER_GAME[input.position]
+
+  return {
+    goals: output.goals * quality * support,
+    assists: output.assists * quality * support,
+  }
+}
+
+/** Expectativa de gols dos dois lados, antes do sorteio do placar. */
+export function goalExpectation(
+  homeStrength: number,
+  awayStrength: number,
+): [number, number] {
+  // Dividido pela metade em cada lado: o favorito faz mais e sofre menos,
+  // sem inflar o total de gols da partida.
+  const edge = Math.exp((homeStrength - awayStrength) / STRENGTH_SCALE / 2)
+
+  return [
+    clamp(BASE_GOALS * edge * HOME_ADVANTAGE, 0.15, 5),
+    clamp(BASE_GOALS / edge, 0.15, 5),
+  ]
 }
 
 export function simulatePlayerSeason(
@@ -392,7 +446,7 @@ export function positionInTable(outcome: LeagueOutcome, clubId: string): number 
   return outcome.standings.findIndex((standing) => standing.clubId === clubId) + 1
 }
 
-function emptyStanding(clubId: string): Standing {
+export function emptyStanding(clubId: string): Standing {
   return {
     clubId,
     played: 0,
@@ -405,7 +459,7 @@ function emptyStanding(clubId: string): Standing {
   }
 }
 
-function record(standing: Standing, scored: number, conceded: number): void {
+export function record(standing: Standing, scored: number, conceded: number): void {
   standing.played++
   standing.goalsFor += scored
   standing.goalsAgainst += conceded
@@ -421,7 +475,7 @@ function record(standing: Standing, scored: number, conceded: number): void {
   }
 }
 
-function compareStandings(a: Standing, b: Standing): number {
+export function compareStandings(a: Standing, b: Standing): number {
   if (b.points !== a.points) return b.points - a.points
 
   const aDiff = a.goalsFor - a.goalsAgainst

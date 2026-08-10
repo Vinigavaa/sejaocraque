@@ -3,7 +3,6 @@ import type { SeasonRecord } from '@/lib/sim/career'
 import { AWARD_LABEL, type Award } from '@/lib/sim/awards'
 import { clubById } from '@/lib/sim/data/clubs'
 import { leagueById } from '@/lib/sim/data/leagues'
-import { PENALTY_CORNERS } from '@/lib/sim/penalty'
 import { matchesPreference } from '@/lib/sim/transfers'
 
 import { ClubCrest } from './Crest'
@@ -44,97 +43,10 @@ export function Overlays({ game }: { game: Game }) {
           overflowY: 'auto',
         }}
       >
-        {overlay.type === 'penalty' && <Penalty game={game} stage={overlay.stage} scored={overlay.scored} />}
         {overlay.type === 'award' && <Award game={game} award={overlay.award} />}
         {overlay.type === 'transfer' && <Transfer game={game} clubId={overlay.clubId} />}
       </div>
     </div>
-  )
-}
-
-function Penalty({
-  game,
-  stage,
-  scored,
-}: {
-  game: Game
-  stage: 'choose' | 'result'
-  scored: boolean
-}) {
-  return (
-    <>
-      <SectionLabel style={{ textAlign: 'center', fontWeight: 800, color: t.muted }}>
-        MOMENTO DECISIVO
-      </SectionLabel>
-      <Display size={22} style={{ marginTop: scaled(6), textAlign: 'center' }}>
-        ESCOLHA O CANTO
-      </Display>
-
-      {stage === 'choose' ? (
-        <div
-          style={{
-            marginTop: scaled(16),
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: scaled(8),
-          }}
-        >
-          {Array.from({ length: PENALTY_CORNERS }, (_, index) => (
-            <div
-              key={index}
-              onClick={game.kickPenalty}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') game.kickPenalty()
-              }}
-              style={{
-                cursor: 'pointer',
-                aspectRatio: '1',
-                background: t.faint,
-                border: `2px solid ${t.line}`,
-                borderRadius: 6,
-              }}
-            />
-          ))}
-        </div>
-      ) : (
-        <>
-          <Display
-            size={28}
-            style={{
-              marginTop: scaled(16),
-              textAlign: 'center',
-              color: scored ? t.goldText : t.text,
-            }}
-          >
-            {scored ? 'GOL!' : 'DEFENDIDO'}
-          </Display>
-          <div
-            style={{
-              marginTop: scaled(6),
-              textAlign: 'center',
-              fontSize: scaled(11),
-              color: t.muted,
-            }}
-          >
-            {scored ? 'O gol entra na sua temporada.' : 'Fica para a próxima.'}
-          </div>
-          <GhostButton
-            onClick={game.closeOverlay}
-            style={{
-              marginTop: scaled(16),
-              width: '100%',
-              background: t.accent,
-              border: 'none',
-              color: 'white',
-            }}
-          >
-            CONTINUAR
-          </GhostButton>
-        </>
-      )}
-    </>
   )
 }
 
@@ -370,8 +282,6 @@ function BallonTrophy() {
 
 function overlayKey(overlay: Overlay): string {
   switch (overlay.type) {
-    case 'penalty':
-      return `penalty-${overlay.stage}`
     case 'award':
       return `award-${overlay.award}`
     case 'transfer':

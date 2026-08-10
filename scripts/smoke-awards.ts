@@ -88,6 +88,7 @@ for (const target of LEVELS) {
       position: 'ATA',
       shirtNumber: 9,
       peakAttrs,
+      careerMode: 'classico',
     })
 
     let won = 0

@@ -65,6 +65,7 @@ function measure(label: string, peak: number, nationality: string): void {
       position: 'ATA',
       shirtNumber: 10,
       peakAttrs: attrs,
+      careerMode: 'classico',
     })
 
     const club = clubById(state.clubId)

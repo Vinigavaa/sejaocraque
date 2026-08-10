@@ -1,5 +1,21 @@
+import {
+  DECISIONS,
+  eligibleDecisions,
+  type DecisionOption,
+  type DecisionSpec,
+  type LiveEffect,
+} from './liveDecisions'
+import {
+  applyMorale,
+  mergeDeltas,
+  moraleFactor,
+  type Morale,
+  type MoraleDelta,
+} from './morale'
 import { clamp } from './positions'
-import { pick, sample, type Rng } from './rng'
+import { pick, poisson, range, sample, type Rng } from './rng'
+import { goalExpectation } from './season'
+import type { NumericAttr, PlayerAttrs, Position } from './types'
 
 /**
  * A narracao minuto a minuto de uma partida.
@@ -14,7 +30,16 @@ import { pick, sample, type Rng } from './rng'
  * ele ja tem na competicao — nunca um acrescimo. Nenhum total de temporada
  * muda por causa da narracao.
  */
-export type LiveEventType = 'gol' | 'chance' | 'defesa' | 'falta' | 'penaltis'
+export type LiveEventType =
+  | 'gol'
+  | 'chance'
+  | 'defesa'
+  | 'falta'
+  | 'penaltis'
+  | 'cartao'
+  | 'lesao'
+  | 'substituicao'
+  | 'decisao'
 
 /**
  * O minimo que a narracao precisa saber de uma partida.
@@ -183,10 +208,16 @@ function shareOf(production: number, matches: number, played: boolean): number {
   return clamp(production / (matches * TEAM_GOALS_PER_MATCH), 0, MAX_SHARE)
 }
 
-/** Lance sem gol, so para a narracao ter respiro entre um placar e outro. */
+/**
+ * Lance sem gol, so para a narracao ter respiro entre um placar e outro.
+ *
+ * O parametro e o minimo que o texto usa, e nao `NarratableMatch` inteiro: os
+ * dois motores desta pasta chamam esta funcao, e o modo Jogo a Jogo nao tem
+ * placar final para oferecer quando o lance acontece.
+ */
 function fillerEvent(
   minute: number,
-  match: NarratableMatch,
+  match: { teamName: string; opponentName: string; played: boolean },
   playerName: string,
   rng: Rng,
 ): LiveEvent {
@@ -233,3 +264,773 @@ function ascending(a: number, b: number): number {
 }
 
 export { MATCH_MINUTES }
+
+/* -------------------------------------------------------------------------
+ * Modo Jogo a Jogo — a partida jogada, e nao narrada.
+ *
+ * A diferenca para tudo o que esta acima e de direcao: `buildTimeline` recebe
+ * um placar pronto e o distribui pelos 90 minutos; daqui para baixo o placar
+ * **sai** da partida. O que a simulacao de temporada entrega e apenas a
+ * expectativa de gols dos dois lados; o que o jogador faz em campo soma ou
+ * subtrai em cima disso.
+ *
+ * Por que a producao esperada do jogador e descontada do time: se o placar
+ * base ja embutia os gols que ele costuma fazer, e as decisoes acrescentassem
+ * mais gols por cima, o modo Jogo a Jogo entregaria placares muito maiores que
+ * o modo classico — e as duas carreiras deixariam de ser comparaveis. Aqui a
+ * expectativa dele sai do bolo do time e volta como oportunidade de decisao.
+ * ---------------------------------------------------------------------- */
+
+export type MatchSide = {
+  name: string
+  /** Null em partida de selecao, onde quem identifica e a bandeira. */
+  clubId: string | null
+  strength: number
+}
+
+export type MatchSetup = {
+  competition: string
+  /** Fase, quando existe. Null em rodada de pontos corridos. */
+  stage: string | null
+  /** Rodada da temporada. Entra na seed e no texto das noticias. */
+  round: number
+  playerName: string
+  position: Position
+  overall: number
+  attrs: PlayerAttrs
+  team: MatchSide
+  opponent: MatchSide
+  atHome: boolean
+  /** Producao esperada do jogador nesta partida — ver `expectedOutputPerMatch`. */
+  expected: { goals: number; assists: number }
+}
+
+export type PlayerMatchResult = {
+  /** Falso quando ele nem entrou. */
+  played: boolean
+  minutes: number
+  goals: number
+  assists: number
+  /** Nota da partida, 1 casa. Zero enquanto a partida nao terminou. */
+  rating: number
+  yellow: number
+  red: boolean
+  injured: boolean
+}
+
+/** O momento aberto, esperando a escolha do jogador. */
+export type LivePending = {
+  id: string
+  prompt: string
+  options: {
+    label: string
+    detail: string
+    /** Chance de dar certo, ja com atributo, confianca e adversario. */
+    chance: number
+  }[]
+}
+
+type ScriptKind =
+  | 'gol-time'
+  | 'gol-adversario'
+  /** Momento que pode virar gol ou assistencia. */
+  | 'decisao-gol'
+  /** Momento de contexto: cartao, lesao, treinador, torcida, vestiario. */
+  | 'decisao'
+  | 'lance'
+  | 'substituicao'
+
+type ScriptEntry = { minute: number; kind: ScriptKind }
+
+export type LiveMatchState = {
+  setup: MatchSetup
+  minute: number
+  events: LiveEvent[]
+  teamGoals: number
+  opponentGoals: number
+  /** Se ele esta em campo agora. */
+  onPitch: boolean
+  started: boolean
+  player: PlayerMatchResult
+  /** Moral no inicio da partida — a base sobre a qual as decisoes somam. */
+  morale: Morale
+  /** O que esta partida mexeu na moral. Aplicado so no apito final. */
+  moraleDelta: MoraleDelta
+  pending: LivePending | null
+  decisionsLeft: number
+  usedDecisions: string[]
+  script: ScriptEntry[]
+  finished: boolean
+}
+
+/** Quantos momentos de decisao uma partida pode abrir. */
+const MIN_DECISIONS = 3
+const MAX_DECISIONS = 6
+
+/**
+ * Quantas chances de gol o jogador recebe, no maximo.
+ *
+ * Tres ja e uma partida excepcional; sem teto, um centroavante de clube muito
+ * superior receberia cinco e a partida viraria treino de finalizacao.
+ */
+const MAX_CHANCES = 3
+
+/**
+ * Aproveitamento medio das opcoes que podem virar gol ou assistencia.
+ *
+ * Serve para converter **producao esperada** em **numero de chances**: se o
+ * jogador costuma produzir 0,68 por jogo e cada chance se converte perto de
+ * 45% das vezes, ele precisa de ~1,5 chance por partida para chegar la.
+ *
+ * Sem essa conversao o modo Jogo a Jogo produzia quase o dobro do classico —
+ * eram tres a seis decisoes por jogo, quase todas capazes de virar gol, e a
+ * conta simplesmente nao fechava com a taxa de producao da posicao.
+ */
+const AVERAGE_CONVERSION = 0.3
+
+/** Quanto um jogador que comeca no banco produz, em relacao a um titular. */
+const BENCH_SHARE = 0.5
+
+/** Minuto a partir do qual uma substituicao faz sentido. */
+const SUB_WINDOW: [number, number] = [58, 84]
+
+export function startLiveMatch(
+  setup: MatchSetup,
+  morale: Morale,
+  rng: Rng,
+): LiveMatchState {
+  const started = startsMatch(setup, morale, rng)
+
+  const [forExpectation, againstExpectation] = sideExpectations(setup, started)
+
+  const teamPlan = poisson(rng, forExpectation)
+  const opponentPlan = poisson(rng, againstExpectation)
+
+  // A producao esperada dele sai do plano do time e volta como oportunidade.
+  //
+  // Quem comeca no banco continua tendo chance de decidir: reserva faz gol, e
+  // zerar a producao dele empurrava a temporada inteira para baixo do modo
+  // classico. O que muda e a escala — meia hora em campo rende menos que
+  // noventa minutos.
+  const expected =
+    (setup.expected.goals + setup.expected.assists) * (started ? 1 : BENCH_SHARE)
+  const chances = Math.min(MAX_CHANCES, stochasticRound(expected / AVERAGE_CONVERSION, rng))
+
+  const script = buildScript(
+    {
+      teammateGoals: Math.max(0, teamPlan - stochasticRound(expected, rng)),
+      opponentGoals: opponentPlan,
+      chances,
+      // O resto do orcamento e de contexto: cartao, lesao, treinador, torcida.
+      // Sao eles que fazem a partida ter decisao mesmo para um zagueiro de
+      // segunda divisao, que quase nao recebe chance de gol.
+      context: clamp(range(rng, MIN_DECISIONS, MAX_DECISIONS) - chances, 1, MAX_DECISIONS),
+      started,
+    },
+    rng,
+  )
+
+  return {
+    setup,
+    minute: 0,
+    events: [],
+    teamGoals: 0,
+    opponentGoals: 0,
+    onPitch: started,
+    started,
+    player: {
+      played: started,
+      minutes: 0,
+      goals: 0,
+      assists: 0,
+      rating: 0,
+      yellow: 0,
+      red: false,
+      injured: false,
+    },
+    morale,
+    moraleDelta: {},
+    pending: null,
+    decisionsLeft: script.filter((entry) => entry.kind === 'decisao').length,
+    usedDecisions: [],
+    script,
+    finished: false,
+  }
+}
+
+/**
+ * Com que frequencia o jogador entra em campo, de 0 a 1.
+ *
+ * Deliberadamente a mesma conta de `matchesPlayed`, no modo classico: nivel
+ * contra elenco, com a margem de 10 porque a forca do clube descreve o elenco
+ * e nao o titular medio. A relacao com o treinador desloca a linha — e o
+ * caminho concreto pelo qual discutir na beira do campo custa minutos.
+ *
+ * Ter as duas contas iguais e o que impede o modo Jogo a Jogo de inflar
+ * presencas: sem isso um garoto de 16 anos disputava 37 dos 38 jogos da Serie
+ * C, contra 28 no modo classico, e a carreira inteira andava mais rapido.
+ */
+export function appearanceShare(setup: MatchSetup, morale: Morale): number {
+  const gap = setup.overall - setup.team.strength + 10
+
+  return clamp(0.55 + gap / 20 + moraleFactor(morale.coach) * 0.12, 0.05, 1)
+}
+
+/**
+ * Quanto da presenca vem de comecar jogando.
+ *
+ * O resto entra do banco. Quem esta acima do elenco quase nao e reserva; quem
+ * esta abaixo aparece mais vezes entrando no segundo tempo do que como titular
+ * — e a relacao com o treinador move essa fronteira nos dois sentidos.
+ */
+function startShare(setup: MatchSetup, morale: Morale): number {
+  return clamp(0.62 + moraleFactor(morale.coach) * 0.2, 0.3, 0.92)
+}
+
+/** Se o jogador comeca jogando. */
+export function startsMatch(setup: MatchSetup, morale: Morale, rng: Rng): boolean {
+  return rng() < appearanceShare(setup, morale) * startShare(setup, morale)
+}
+
+/** Expectativa de gols dos dois lados, ja pelo ponto de vista do jogador. */
+function sideExpectations(setup: MatchSetup, started: boolean): [number, number] {
+  // Ele so reforca o time se estiver em campo desde o inicio.
+  const lift = started ? clamp(Math.max(0, setup.overall - setup.team.strength) * 0.22, 0, 5) : 0
+  const team = setup.team.strength + lift
+
+  const [home, away] = setup.atHome
+    ? goalExpectation(team, setup.opponent.strength)
+    : goalExpectation(setup.opponent.strength, team)
+
+  return setup.atHome ? [home, away] : [away, home]
+}
+
+/** Arredondamento que preserva a media: 0,4 vira 1 em 40% das vezes. */
+function stochasticRound(value: number, rng: Rng): number {
+  const floor = Math.floor(value)
+  return floor + (rng() < value - floor ? 1 : 0)
+}
+
+function buildScript(
+  input: {
+    teammateGoals: number
+    opponentGoals: number
+    chances: number
+    context: number
+    started: boolean
+  },
+  rng: Rng,
+): ScriptEntry[] {
+  const fillers = 3
+  const total =
+    input.teammateGoals +
+    input.opponentGoals +
+    input.chances +
+    input.context +
+    fillers +
+    1
+
+  const minutes = sample(rng, allMinutes(), Math.min(MATCH_MINUTES, total))
+  const entries: ScriptEntry[] = []
+  let cursor = 0
+
+  const take = (kind: ScriptKind, count: number) => {
+    for (let index = 0; index < count && cursor < minutes.length; index++) {
+      entries.push({ minute: minutes[cursor++], kind })
+    }
+  }
+
+  take('gol-time', input.teammateGoals)
+  take('gol-adversario', input.opponentGoals)
+  take('decisao-gol', input.chances)
+  take('decisao', input.context)
+  take('lance', fillers)
+
+  // A janela de substituicao e a mesma para quem sai e para quem entra: o
+  // treinador mexe no time uma vez, e o que muda e de que lado o jogador esta.
+  entries.push({ minute: range(rng, SUB_WINDOW[0], SUB_WINDOW[1]), kind: 'substituicao' })
+
+  return entries.sort((a, b) => a.minute - b.minute)
+}
+
+/**
+ * Avanca ate o proximo acontecimento.
+ *
+ * Devolve um estado novo a cada chamada — a interface controla o ritmo, e o
+ * motor nao sabe nada de relogio. Quando o proximo acontecimento e uma
+ * decisao, `pending` volta preenchido e nada mais avanca ate a escolha.
+ */
+export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchState {
+  if (state.finished || state.pending) return state
+
+  const next = state.script[0]
+
+  if (!next || next.minute >= MATCH_MINUTES) {
+    return finishLiveMatch({ ...state, minute: MATCH_MINUTES })
+  }
+
+  const rest = state.script.slice(1)
+  const at = { ...state, minute: next.minute, script: rest }
+
+  switch (next.kind) {
+    case 'gol-time':
+      return withEvent(at, {
+        minute: next.minute,
+        type: 'gol',
+        side: 'team',
+        text: `${state.setup.team.name} marca.`,
+        byPlayer: false,
+      })
+
+    case 'gol-adversario':
+      return withEvent(at, {
+        minute: next.minute,
+        type: 'gol',
+        side: 'opponent',
+        text: `${state.setup.opponent.name} marca.`,
+        byPlayer: false,
+      })
+
+    case 'substituicao':
+      return resolveSubstitution(at, rng)
+
+    case 'decisao-gol':
+      return openDecision(at, rng, true)
+
+    case 'decisao':
+      return openDecision(at, rng, false)
+
+    case 'lance':
+    default:
+      return withEvent(
+        at,
+        fillerEvent(
+          next.minute,
+          {
+            teamName: state.setup.team.name,
+            opponentName: state.setup.opponent.name,
+            played: state.onPitch,
+          },
+          state.setup.playerName,
+          rng,
+        ),
+      )
+  }
+}
+
+/** Abre um momento de decisao, ou cai num lance comum quando nao ha nenhum. */
+function openDecision(
+  state: LiveMatchState,
+  rng: Rng,
+  productive: boolean,
+): LiveMatchState {
+  if (!state.onPitch || state.decisionsLeft <= 0) {
+    return withEvent(
+      state,
+      fillerEvent(
+        state.minute,
+        {
+          teamName: state.setup.team.name,
+          opponentName: state.setup.opponent.name,
+          played: state.onPitch,
+        },
+        state.setup.playerName,
+        rng,
+      ),
+    )
+  }
+
+  const query = {
+    position: state.setup.position,
+    minute: state.minute,
+    teamGoals: state.teamGoals,
+    opponentGoals: state.opponentGoals,
+    used: state.usedDecisions,
+  }
+
+  // A chance de gol nao existe para toda posicao em toda fase do jogo. Quando
+  // nao ha nenhuma disponivel, o momento vira um de contexto em vez de sumir —
+  // o orcamento da partida ja contava com ele.
+  const options = orEmpty(
+    eligibleDecisions({ ...query, productive }),
+    () => eligibleDecisions({ ...query, productive: !productive }),
+  )
+
+  if (options.length === 0) return { ...state, decisionsLeft: 0 }
+
+  const spec = weightedPick(options, rng)
+
+  return {
+    ...state,
+    usedDecisions: [...state.usedDecisions, spec.id],
+    pending: {
+      id: spec.id,
+      prompt: fill(spec.prompt, state.setup),
+      options: spec.options.map((option) => ({
+        label: option.label,
+        detail: option.detail,
+        chance: successChance(option, state),
+      })),
+    },
+  }
+}
+
+/**
+ * Resolve a escolha do jogador.
+ *
+ * O efeito e aplicado na hora — placar, nota, cartao, lesao — mas a moral so
+ * e somada em `moraleDelta`. Ela e gravada na carreira no apito final, para
+ * que uma partida abandonada no meio nao deixe metade das consequencias.
+ */
+export function chooseLiveOption(
+  state: LiveMatchState,
+  index: number,
+  rng: Rng,
+): LiveMatchState {
+  const pending = state.pending
+  if (!pending) return state
+
+  const spec = specById(pending.id)
+  const option = spec?.options[index]
+  if (!spec || !option) return state
+
+  const chance = successChance(option, state)
+  const succeeded = rng() < chance
+  const effect = succeeded ? option.success : option.failure
+
+  // A nota mede o que ele fez **alem do que a jogada prometia**.
+  //
+  // Sem isso a nota vira funcao de quantas decisoes apareceram: escolher
+  // sempre a opcao mais segura somava nota a cada momento, e uma partida com
+  // seis decisoes terminava melhor que uma com tres pelo simples fato de ter
+  // tido mais oportunidades de somar. Descontando a expectativa, jogar o
+  // obvio e acertar rende quase nada — e converter o lance dificil rende
+  // muito, que e como um jogador de verdade e avaliado.
+  const expectedRating =
+    chance * (option.success.rating ?? 0) + (1 - chance) * (option.failure.rating ?? 0)
+
+  const applied = applyEffect(
+    { ...state, pending: null, decisionsLeft: state.decisionsLeft - 1 },
+    effect,
+    expectedRating,
+  )
+
+  return effect.text
+    ? withEvent(applied, {
+        minute: state.minute,
+        type: effectType(effect),
+        side: effect.opponentGoals ? 'opponent' : 'team',
+        text: fill(effect.text, state.setup),
+        byPlayer: true,
+      })
+    : applied
+}
+
+function effectType(effect: LiveEffect): LiveEventType {
+  if (effect.goals || effect.assists || effect.teamGoals || effect.opponentGoals) return 'gol'
+  if (effect.card) return 'cartao'
+  if (effect.injury) return 'lesao'
+  if (effect.off) return 'substituicao'
+  return 'decisao'
+}
+
+function applyEffect(
+  state: LiveMatchState,
+  effect: LiveEffect,
+  expectedRating = 0,
+): LiveMatchState {
+  const scored = (effect.goals ?? 0) + (effect.assists ?? 0) + (effect.teamGoals ?? 0)
+
+  return {
+    ...state,
+    teamGoals: state.teamGoals + scored,
+    opponentGoals: state.opponentGoals + (effect.opponentGoals ?? 0),
+    onPitch: state.onPitch && !effect.off,
+    moraleDelta: mergeDeltas([state.moraleDelta, effect.morale ?? {}]),
+    player: {
+      ...state.player,
+      goals: state.player.goals + (effect.goals ?? 0),
+      assists: state.player.assists + (effect.assists ?? 0),
+      yellow: state.player.yellow + (effect.card === 'amarelo' ? 1 : 0),
+      red: state.player.red || effect.card === 'vermelho',
+      injured: state.player.injured || Boolean(effect.injury),
+      // A nota bruta se acumula aqui e e fechada no apito final.
+      rating: state.player.rating + (effect.rating ?? 0) - expectedRating,
+    },
+  }
+}
+
+/**
+ * Chance de a opcao dar certo.
+ *
+ * Quatro parcelas, todas visiveis para o jogador atraves do numero exibido:
+ * a dificuldade do lance, o atributo que o decide, a confianca do momento e a
+ * qualidade de quem esta do outro lado. Passe tambem depende do elenco — nao
+ * adianta escolher tocar quando ninguem se movimenta para receber.
+ */
+export function successChance(option: DecisionOption, state: LiveMatchState): number {
+  // Algumas opcoes nao tem como dar errado — pedir substituicao, sair de campo
+  // aplaudindo. Passa-las pelo `clamp` devolveria 95%, e a interface anunciaria
+  // um risco que nao existe.
+  if (option.base >= 1) return 1
+
+  const attribute = option.attr ? attributeEdge(state.setup.attrs, option.attr) : 0
+  const confidence = moraleFactor(state.morale.confidence) * 0.08
+  const squad = option.attr === 'pas' ? moraleFactor(state.morale.squad) * 0.06 : 0
+  const opposition =
+    (state.setup.opponent.strength - state.setup.team.strength) / 400
+
+  return clamp(option.base + attribute + confidence + squad - opposition, 0.05, 0.95)
+}
+
+/** ±0,2 no maximo: o atributo inclina o lance, nao decide sozinho. */
+function attributeEdge(attrs: PlayerAttrs, attr: NumericAttr): number {
+  return clamp((attrs[attr] - 70) / 140, -0.2, 0.2)
+}
+
+/**
+ * Substituicao no meio do jogo.
+ *
+ * Para quem comecou, e o risco de ser sacado; para quem ficou no banco, e a
+ * chance de entrar. Os dois lados dependem do treinador — e da nota ate ali,
+ * porque ninguem tira quem esta decidindo a partida.
+ */
+function resolveSubstitution(state: LiveMatchState, rng: Rng): LiveMatchState {
+  const coach = moraleFactor(state.morale.coach)
+
+  if (!state.onPitch && !state.player.red && !state.player.injured) {
+    // A chance de entrar e o que falta para fechar a presenca total. Assim a
+    // soma "comecou jogando" + "entrou depois" bate com `appearanceShare`, e
+    // nao existe presenca extra escondida na substituicao.
+    const appearance = appearanceShare(state.setup, state.morale)
+    const started = appearance * startShare(state.setup, state.morale)
+    const chance = clamp((appearance - started) / Math.max(1 - started, 0.01), 0.02, 0.9)
+
+    if (rng() >= chance) return state
+
+    return withEvent(
+      { ...state, onPitch: true, player: { ...state.player, played: true } },
+      {
+        minute: state.minute,
+        type: 'substituicao',
+        side: 'team',
+        text: `${state.setup.playerName} entra em campo.`,
+        byPlayer: true,
+      },
+    )
+  }
+
+  if (!state.onPitch) return state
+
+  // Quem esta bem em campo nao sai. `rating` aqui ainda e o acumulado das
+  // decisoes, entao ele mede exatamente o que aconteceu ate agora.
+  const performance = state.player.rating + state.player.goals * 0.8
+  const chance = clamp(0.3 - coach * 0.25 - performance * 0.12, 0.03, 0.75)
+
+  if (rng() >= chance) return state
+
+  return withEvent(
+    { ...state, onPitch: false },
+    {
+      minute: state.minute,
+      type: 'substituicao',
+      side: 'team',
+      text: `${state.setup.playerName} é substituído.`,
+      byPlayer: true,
+    },
+  )
+}
+
+/**
+ * Joga o resto sozinho.
+ *
+ * O jogador pode sair da partida a qualquer momento; o que ele nao pode e
+ * pular as consequencias. As decisoes que sobrarem sao resolvidas por
+ * `autoChoice`.
+ */
+export function simulateRestOfMatch(state: LiveMatchState, rng: Rng): LiveMatchState {
+  let current = state
+  let guard = 0
+
+  while (!current.finished && guard < 200) {
+    guard++
+
+    if (current.pending) {
+      current = chooseLiveOption(current, autoChoice(current, rng), rng)
+      continue
+    }
+
+    current = advanceLiveMatch(current, rng)
+  }
+
+  return current.finished ? current : finishLiveMatch(current)
+}
+
+/**
+ * Apito final: fecha a nota e a moral.
+ *
+ * A nota parte de 6,0 — o "cumpriu o combinado" do futebol — e anda com o que
+ * ele produziu, com o que as decisoes renderam e com o resultado. Quem jogou
+ * pouco fica perto de 6: nao da para tirar 9 em quinze minutos.
+ */
+export function finishLiveMatch(state: LiveMatchState): LiveMatchState {
+  if (state.finished) return state
+
+  const { player } = state
+  const won = state.teamGoals > state.opponentGoals
+  const lost = state.teamGoals < state.opponentGoals
+
+  const minutes = playedMinutes(state)
+
+  let rating = 0
+
+  if (player.played) {
+    const raw =
+      6 +
+      (state.setup.overall - state.setup.team.strength) * 0.012 +
+      player.goals * 1 +
+      player.assists * 0.7 +
+      player.rating +
+      (won ? 0.2 : lost ? -0.15 : 0) -
+      player.yellow * 0.25 -
+      (player.red ? 1.2 : 0)
+
+    // Pouco tempo em campo puxa a nota de volta para o meio, para os dois
+    // lados: nem heroi nem vilao em dez minutos.
+    const weight = clamp(minutes / 60, 0.35, 1)
+    rating = Number(clamp(6 + (raw - 6) * weight, 3, 10).toFixed(1))
+  }
+
+  // O resultado da partida tambem mexe na cabeca de quem jogou.
+  const outcome: MoraleDelta = player.played
+    ? { confidence: won ? 2 : lost ? -2 : 0 }
+    : { confidence: -1, coach: -1 }
+
+  return {
+    ...state,
+    minute: MATCH_MINUTES,
+    finished: true,
+    pending: null,
+    moraleDelta: mergeDeltas([state.moraleDelta, outcome]),
+    player: { ...player, rating, minutes },
+  }
+}
+
+/** A moral da carreira depois desta partida. */
+export function moraleAfterMatch(state: LiveMatchState): Morale {
+  return applyMorale(state.morale, state.moraleDelta)
+}
+
+/**
+ * Minutos em campo.
+ *
+ * Aproximacao de proposito: o motor guarda quando ele entrou ou saiu apenas
+ * como evento, e reconstruir a partir da lista e mais honesto do que manter um
+ * contador paralelo que pode divergir dela.
+ */
+function playedMinutes(state: LiveMatchState): number {
+  if (!state.player.played) return 0
+
+  const entry = state.events.find(
+    (event) => event.type === 'substituicao' && event.text.includes('entra em campo'),
+  )
+  const exit = state.events.find(
+    (event) =>
+      (event.type === 'substituicao' && event.text.includes('substituído')) ||
+      event.type === 'lesao' ||
+      (event.type === 'cartao' && state.player.red),
+  )
+
+  return Math.max(0, (exit?.minute ?? MATCH_MINUTES) - (entry?.minute ?? 0))
+}
+
+function withEvent(state: LiveMatchState, event: LiveEvent): LiveMatchState {
+  const goals =
+    event.type === 'gol' && !event.byPlayer
+      ? event.side === 'team'
+        ? { teamGoals: state.teamGoals + 1 }
+        : { opponentGoals: state.opponentGoals + 1 }
+      : {}
+
+  return { ...state, ...goals, events: [...state.events, event] }
+}
+
+/**
+ * O momento pelo id.
+ *
+ * `pending` guarda o id, e nao o objeto inteiro, porque ele atravessa o estado
+ * da interface — e estado de interface precisa continuar serializavel.
+ */
+const DECISION_INDEX = new Map(DECISIONS.map((spec) => [spec.id, spec]))
+
+function specById(id: string): DecisionSpec | undefined {
+  return DECISION_INDEX.get(id)
+}
+
+/**
+ * O que o jogador faria sozinho.
+ *
+ * A primeira versao escolhia sempre a opcao de maior chance, e o resultado
+ * denunciava o atalho: como tocar para o companheiro e quase sempre mais
+ * seguro que finalizar, um centroavante terminava a temporada com dez
+ * assistencias e dois gols. Ninguem joga assim.
+ *
+ * Aqui o peso e a chance vezes a afinidade da posicao: o que decide entre
+ * chutar e passar e o mesmo `expected` que o modo classico usa para dizer que
+ * um atacante faz quatro vezes mais gols do que da assistencias.
+ */
+function autoChoice(state: LiveMatchState, rng: Rng): number {
+  const spec = specById(state.pending?.id ?? '')
+  if (!spec) return 0
+
+  const { goals, assists } = state.setup.expected
+
+  // A opcao que nao produz nada e uma saida, nao o padrao. Com ela pesando o
+  // mesmo que as outras, um volante nunca chutava e nunca lancava — e a
+  // producao dele no modo Jogo a Jogo ficava abaixo da do modo classico.
+  const neutral = Math.max(goals, assists) * 0.35
+
+  const weights = spec.options.map((option) => {
+    const affinity = option.success.goals
+      ? goals
+      : option.success.assists || option.success.teamGoals
+        ? assists
+        : neutral
+
+    return successChance(option, state) * Math.max(affinity, 0.02)
+  })
+
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  let draw = rng() * total
+
+  for (let index = 0; index < weights.length; index++) {
+    draw -= weights[index]
+    if (draw <= 0) return index
+  }
+
+  return 0
+}
+
+/** A primeira lista, ou a alternativa quando ela vem vazia. */
+function orEmpty<T>(items: T[], fallback: () => T[]): T[] {
+  return items.length > 0 ? items : fallback()
+}
+
+function weightedPick(specs: DecisionSpec[], rng: Rng): DecisionSpec {
+  const total = specs.reduce((sum, spec) => sum + spec.weight, 0)
+  let draw = rng() * total
+
+  for (const spec of specs) {
+    draw -= spec.weight
+    if (draw <= 0) return spec
+  }
+
+  return specs[specs.length - 1]
+}
+
+function fill(text: string, setup: MatchSetup): string {
+  return text
+    .replaceAll('{jogador}', setup.playerName)
+    .replaceAll('{time}', setup.team.name)
+    .replaceAll('{adversario}', setup.opponent.name)
+}

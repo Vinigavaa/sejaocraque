@@ -63,6 +63,7 @@ let state: CareerState = startCareer({
   position: bestPosition.position,
   shirtNumber: 10,
   peakAttrs,
+  careerMode: 'classico',
 })
 
 const first = clubById(state.clubId)!

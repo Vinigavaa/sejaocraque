@@ -1,3 +1,4 @@
+import type { CareerMode } from '@/lib/sim/career'
 import { NATIONS } from '@/lib/sim/data/nations'
 import type { DraftMode } from '@/lib/sim/draft'
 import { POSITIONS, POSITION_LABEL, type Position } from '@/lib/sim/types'
@@ -13,6 +14,19 @@ const SHIRT_NUMBERS = [7, 9, 10, 11, 17, 23]
 const MODES: { id: DraftMode; title: string; description: string }[] = [
   { id: 'amador', title: 'AMADOR', description: 'Vê as notas das lendas. 3 re-sorteios.' },
   { id: 'pro', title: 'PRO', description: 'Notas escondidas. 1 re-sorteio.' },
+]
+
+const CAREER_MODE_OPTIONS: { id: CareerMode; title: string; description: string }[] = [
+  {
+    id: 'classico',
+    title: 'CLÁSSICO',
+    description: 'A temporada é resolvida de uma vez. Você assiste ao jogo que a decidiu.',
+  },
+  {
+    id: 'jogoAJogo',
+    title: 'JOGO A JOGO',
+    description: 'Cada partida do campeonato, minuto a minuto, com decisões que mudam a carreira.',
+  },
 ]
 
 /** Previa neutra: mostra a forma do cartao antes de existir um jogador. */
@@ -174,7 +188,34 @@ export function Create({ game }: { game: Game }) {
         ))}
       </div>
 
-      <SectionLabel style={{ marginTop: scaled(24) }}>Modo</SectionLabel>
+      <SectionLabel style={{ marginTop: scaled(24) }}>Como você vai jogar</SectionLabel>
+      <div
+        style={{ marginTop: scaled(8), display: 'grid', gridTemplateColumns: '1fr 1fr', gap: scaled(8) }}
+      >
+        {CAREER_MODE_OPTIONS.map((option) => (
+          <SelectCard
+            key={option.id}
+            selected={game.careerMode === option.id}
+            onClick={() => game.setCareerMode(option.id)}
+            style={{ padding: scaled(14) }}
+          >
+            <Display size={16}>{option.title}</Display>
+            <div
+              style={{ marginTop: scaled(6), fontSize: scaled(11), color: t.mutedStrong, lineHeight: 1.4 }}
+            >
+              {option.description}
+            </div>
+            <div style={{ marginTop: scaled(8), fontSize: scaled(12), minHeight: scaled(16) }}>
+              {game.careerMode === option.id ? '✓ selecionado' : ''}
+            </div>
+          </SelectCard>
+        ))}
+      </div>
+      <div style={{ marginTop: scaled(8), fontSize: scaled(10), color: t.faintText, lineHeight: 1.5 }}>
+        A escolha vale para a carreira inteira e não pode ser trocada depois.
+      </div>
+
+      <SectionLabel style={{ marginTop: scaled(24) }}>Dificuldade do draft</SectionLabel>
       <div
         style={{ marginTop: scaled(8), display: 'grid', gridTemplateColumns: '1fr 1fr', gap: scaled(8) }}
       >

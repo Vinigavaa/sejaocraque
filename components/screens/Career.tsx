@@ -2,12 +2,31 @@ import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
 import { leagueById } from '@/lib/sim/data/leagues'
 import { seasonLabel } from '@/lib/sim/career'
+import {
+  MORALE_LABEL,
+  moraleLabel,
+  reputationLabel,
+  type MoraleKey,
+} from '@/lib/sim/morale'
+import { statsFromLog } from '@/lib/sim/matchday'
+import { finalizeLeague } from '@/lib/sim/season'
 import { ALL_ATTRS, ATTR_LABEL, type Attr } from '@/lib/sim/types'
 
+import { AgentHint } from '../AgentHint'
 import { ClubCrest, LeagueCrest } from '../Crest'
 import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
 import { Badge, Display, scaled, SectionLabel, Stat, t } from '../shared'
+
+/** O alcance da notícia vira cor: a barra lateral diz o tamanho do assunto. */
+const REACH_COLOR: Record<string, string> = {
+  local: t.line,
+  nacional: t.accent,
+  continental: t.gold,
+  mundial: t.greenText,
+}
+
+const MORALE_KEYS: MoraleKey[] = ['confidence', 'coach', 'squad', 'reputation']
 
 export function Career({ game }: { game: Game }) {
   const career = game.career
@@ -17,7 +36,26 @@ export function Career({ game }: { game: Game }) {
   // uma divisão acima da que os dados estáticos registram.
   const league = leagueById(career.leagueId)
   const record = game.lastRecord
-  const table = game.lastTable
+  const jogoAJogo = career.config.careerMode === 'jogoAJogo'
+
+  // No Jogo a Jogo a tabela é do campeonato em andamento, e não a do ano
+  // passado: ela é a razão de o jogador voltar para esta tela entre as
+  // rodadas. Fechá-la aqui usa a mesma função do motor — ordenar de outro
+  // jeito na interface faria a classificação exibida divergir da real.
+  const table =
+    jogoAJogo && game.matchday && league
+      ? finalizeLeague(league, game.matchday.table, [])
+      : game.lastTable
+
+  // Durante a temporada os números são os do campeonato em andamento; fora
+  // dela, os do ano que acabou. Mostrar o ano passado enquanto se joga o atual
+  // é o tipo de detalhe que quebra a ilusão de estar vivendo a temporada.
+  const running =
+    jogoAJogo && game.matchday && game.matchday.log.length > 0
+      ? statsFromLog(game.matchday.log)
+      : null
+
+  const shown = running ?? record?.stats ?? null
 
   return (
     <ScreenLayout
@@ -35,7 +73,7 @@ export function Career({ game }: { game: Game }) {
             >
               {table.standings.map((standing, index) => {
                 const rowClub = clubById(standing.clubId)
-                const isPlayer = standing.clubId === record?.clubId
+                const isPlayer = standing.clubId === career.clubId
                 const promotionCut = table.promotedIds.length
                 const relegationStart = table.standings.length - table.relegatedIds.length
 
@@ -128,22 +166,61 @@ export function Career({ game }: { game: Game }) {
           </div>
         </section>
 
-        {game.headlines.length > 0 && (
+        {game.news.length > 0 && (
           <section>
-            <SectionLabel>A imprensa</SectionLabel>
-            <div style={{ marginTop: scaled(8), display: 'flex', flexDirection: 'column', gap: scaled(6) }}>
-              {game.headlines.map((headline, index) => (
-                <div
-                  key={`${headline}-${index}`}
+            <SectionLabel>Imprensa</SectionLabel>
+            <div
+              style={{
+                marginTop: scaled(8),
+                display: 'flex',
+                flexDirection: 'column',
+                gap: scaled(8),
+              }}
+            >
+              {game.news.map((news) => (
+                <article
+                  key={news.id}
                   style={{
-                    fontSize: scaled(12),
-                    color: 'oklch(80% 0.015 70)',
-                    borderLeft: `2px solid ${t.gold}`,
-                    paddingLeft: scaled(8),
+                    border: `1px solid ${t.lineSoft}`,
+                    borderLeft: `2px solid ${REACH_COLOR[news.reach]}`,
+                    borderRadius: 6,
+                    background: t.card,
+                    padding: `${scaled(8)} ${scaled(10)}`,
                   }}
                 >
-                  “{headline}”
-                </div>
+                  <div
+                    style={{
+                      fontSize: scaled(9),
+                      color: t.faintText,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                    }}
+                  >
+                    {news.outlet} · {news.round ? `${news.round}ª rodada` : news.season}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: scaled(3),
+                      fontSize: scaled(12),
+                      fontWeight: 700,
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {news.headline}
+                  </div>
+                  {news.body && (
+                    <div
+                      style={{
+                        marginTop: scaled(4),
+                        fontSize: scaled(11),
+                        color: t.mutedStrong,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {news.body}
+                    </div>
+                  )}
+                </article>
               ))}
             </div>
           </section>
@@ -168,7 +245,7 @@ export function Career({ game }: { game: Game }) {
           {/* A aposentadoria sai pelo resumo direto para o fim de carreira, entao
               esta tela nunca aparece com a carreira encerrada. */}
           <button
-            onClick={game.advance}
+            onClick={jogoAJogo ? game.playNextMatch : game.advance}
             style={{
               background: t.accent,
               color: 'white',
@@ -180,8 +257,17 @@ export function Career({ game }: { game: Game }) {
               cursor: 'pointer',
             }}
           >
-            AVANÇAR TEMPORADA
+            {jogoAJogo ? 'PRÓXIMO JOGO' : 'AVANÇAR TEMPORADA'}
           </button>
+          {/* No Jogo a Jogo o jogador precisa saber onde está no calendário
+              antes de decidir se joga mais uma rodada agora. */}
+          {jogoAJogo && (
+            <div style={{ fontSize: scaled(10), color: t.faintText, textAlign: 'center' }}>
+              {game.matchday
+                ? `Rodada ${game.matchday.roundIndex + 1} de ${game.matchday.rounds.length}`
+                : 'A temporada começa no próximo jogo'}
+            </div>
+          )}
           <button
             onClick={game.openAgent}
             style={{
@@ -235,12 +321,18 @@ export function Career({ game }: { game: Game }) {
         </div>
       }
     >
+      <AgentHint game={game} />
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(20) }}>
         <section>
           <SectionLabel style={{ display: 'flex', alignItems: 'center', gap: scaled(6) }}>
             <LeagueCrest leagueId={career.leagueId} size={16} />
-            {record ? `Temporada ${record.label}` : `Temporada ${seasonLabel(0)}`} ·{' '}
-            {league?.name}
+            {running
+              ? `Temporada ${seasonLabel(career.seasonIndex)} em curso`
+              : record
+                ? `Temporada ${record.label}`
+                : `Temporada ${seasonLabel(0)}`}{' '}
+            · {league?.name}
           </SectionLabel>
           <div
             style={{
@@ -250,10 +342,10 @@ export function Career({ game }: { game: Game }) {
               gap: scaled(8),
             }}
           >
-            <Stat value={record?.stats.matches ?? '—'} label="jogos" />
-            <Stat value={record?.stats.goals ?? '—'} label="gols" />
-            <Stat value={record?.stats.assists ?? '—'} label="assist." />
-            <Stat value={record?.stats.rating ? record.stats.rating.toFixed(1) : '—'} label="nota" />
+            <Stat value={shown?.matches ?? '—'} label="jogos" />
+            <Stat value={shown?.goals ?? '—'} label="gols" />
+            <Stat value={shown?.assists ?? '—'} label="assist." />
+            <Stat value={shown?.rating ? shown.rating.toFixed(1) : '—'} label="nota" />
           </div>
           {/* Fica nesta seção, e não no cabeçalho: o cabeçalho mostra o clube da
               próxima temporada, e a frase falaria de um clube que não é este.
@@ -311,6 +403,66 @@ export function Career({ game }: { game: Game }) {
             </div>
           </section>
         )}
+
+        <section>
+          <SectionLabel>Como você está sendo visto</SectionLabel>
+          <div
+            style={{
+              marginTop: scaled(8),
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: scaled(8),
+            }}
+          >
+            {MORALE_KEYS.map((key) => {
+              const value = career.morale[key]
+
+              return (
+                <div
+                  key={key}
+                  style={{
+                    border: `1px solid ${t.lineSoft}`,
+                    borderRadius: 6,
+                    background: t.card,
+                    padding: `${scaled(8)} ${scaled(10)}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'baseline',
+                    }}
+                  >
+                    <div style={{ fontSize: scaled(11), fontWeight: 700 }}>
+                      {MORALE_LABEL[key]}
+                    </div>
+                    <div style={{ fontSize: scaled(10), color: t.mutedStrong }}>
+                      {key === 'reputation' ? reputationLabel(value) : moraleLabel(value)}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      marginTop: scaled(6),
+                      height: 4,
+                      borderRadius: 999,
+                      background: t.line,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${value}%`,
+                        height: '100%',
+                        background: value >= 50 ? t.green : t.accent,
+                      }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
 
         <TrainingPicker game={game} />
       </div>
