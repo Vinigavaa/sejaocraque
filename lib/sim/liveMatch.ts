@@ -1,10 +1,28 @@
 import {
   DECISIONS,
   eligibleDecisions,
+  timingKindOf,
+  weightFor,
   type DecisionOption,
   type DecisionSpec,
   type LiveEffect,
 } from './liveDecisions'
+import {
+  FOCUS_ATTACK_SHARE,
+  NEUTRAL_ATTACK_SHARE,
+  focusEdge,
+  type DecisionSide,
+  type MatchFocus,
+} from './liveFocus'
+import {
+  blindCursor,
+  buildTiming,
+  connected,
+  missedTiming,
+  resolveTiming,
+  type TimingChallenge,
+  type TimingOutcome,
+} from './liveTiming'
 import {
   applyMorale,
   mergeDeltas,
@@ -14,7 +32,7 @@ import {
 } from './morale'
 import { clamp } from './positions'
 import { pick, poisson, range, sample, type Rng } from './rng'
-import { goalExpectation } from './season'
+import { goalExpectation, MIN_PARTICIPATION, participationShare } from './season'
 import type { NumericAttr, PlayerAttrs, Position } from './types'
 
 /**
@@ -322,12 +340,26 @@ export type PlayerMatchResult = {
 export type LivePending = {
   id: string
   prompt: string
+  side: DecisionSide
   options: {
     label: string
     detail: string
     /** Chance de dar certo, ja com atributo, confianca e adversario. */
     chance: number
+    /** Preenchido quando a opcao abre a barra de timing em vez de sortear. */
+    timing: TimingChallenge['kind'] | null
   }[]
+}
+
+/**
+ * A barra aberta, esperando o clique.
+ *
+ * Guarda o indice da opcao porque o efeito so e aplicado depois do clique: o
+ * jogador ja escolheu **o que** fazer, e a barra decide **como** saiu.
+ */
+export type LiveTiming = {
+  optionIndex: number
+  challenge: TimingChallenge
 }
 
 type ScriptKind =
@@ -339,6 +371,8 @@ type ScriptKind =
   | 'decisao'
   | 'lance'
   | 'substituicao'
+  /** Intervalo: a partida para e o foco pode mudar. */
+  | 'intervalo'
 
 type ScriptEntry = { minute: number; kind: ScriptKind }
 
@@ -357,23 +391,49 @@ export type LiveMatchState = {
   /** O que esta partida mexeu na moral. Aplicado so no apito final. */
   moraleDelta: MoraleDelta
   pending: LivePending | null
+  /** A barra aberta. Bloqueia a partida do mesmo jeito que `pending`. */
+  timing: LiveTiming | null
+  /** O resultado do ultimo clique, para a interface poder mostrar o que saiu. */
+  lastTiming: TimingOutcome | null
   decisionsLeft: number
   usedDecisions: string[]
   script: ScriptEntry[]
+  /** Foco tatico atual. Escolhido antes do apito e trocavel no intervalo. */
+  focus: MatchFocus
+  /** Antes do apito inicial: a partida espera a escolha do foco. */
+  kickoff: boolean
+  /** No intervalo: a partida espera a confirmacao do foco do segundo tempo. */
+  halftime: boolean
+  /** Se o foco ja foi trocado no intervalo. Uma troca por partida. */
+  focusChanged: boolean
   finished: boolean
 }
 
 /** Quantos momentos de decisao uma partida pode abrir. */
-const MIN_DECISIONS = 3
-const MAX_DECISIONS = 6
+const MIN_DECISIONS = 4
+const MAX_DECISIONS = 7
 
 /**
  * Quantas chances de gol o jogador recebe, no maximo.
  *
- * Tres ja e uma partida excepcional; sem teto, um centroavante de clube muito
- * superior receberia cinco e a partida viraria treino de finalizacao.
+ * Quatro ja e uma partida excepcional; sem teto, um centroavante de clube
+ * muito superior receberia sete e a partida viraria treino de finalizacao.
  */
-const MAX_CHANCES = 3
+const MAX_CHANCES = 4
+
+/**
+ * O piso de oportunidades claras, em chances por partida.
+ *
+ * Existe porque a producao esperada de um zagueiro e tao baixa que a conta
+ * sozinha lhe daria uma chance de gol a cada dez ou quinze jogos — realista e
+ * sem graca. Com o piso ele recebe uma a cada tres partidas, mais ou menos.
+ *
+ * E uma **taxa**, e nao um minimo de uma chance por jogo: garantir uma por
+ * partida triplicava a producao de zagueiro e volante, que passavam a marcar
+ * mais no modo Jogo a Jogo do que no classico. Quem garante que a partida
+ * sempre tem o que decidir e o orcamento de contexto, que nunca e zero.
+ */
+const MIN_CHANCE_RATE = 0.26
 
 /**
  * Aproveitamento medio das opcoes que podem virar gol ou assistencia.
@@ -385,8 +445,13 @@ const MAX_CHANCES = 3
  * Sem essa conversao o modo Jogo a Jogo produzia quase o dobro do classico —
  * eram tres a seis decisoes por jogo, quase todas capazes de virar gol, e a
  * conta simplesmente nao fechava com a taxa de producao da posicao.
+ *
+ * Subiu de 0,30 para 0,36 quando a barra de timing entrou: o sorteio antigo
+ * convertia exatamente a chance do lance, e um jogador com timing converte
+ * acima dela. Sem esse ajuste, a mesma carreira renderia mais no modo Jogo a
+ * Jogo do que no classico so por ser jogada a mao.
  */
-const AVERAGE_CONVERSION = 0.3
+const AVERAGE_CONVERSION = 0.29
 
 /** Quanto um jogador que comeca no banco produz, em relacao a um titular. */
 const BENCH_SHARE = 0.5
@@ -394,9 +459,13 @@ const BENCH_SHARE = 0.5
 /** Minuto a partir do qual uma substituicao faz sentido. */
 const SUB_WINDOW: [number, number] = [58, 84]
 
+/** O apito do intervalo. */
+const HALFTIME_MINUTE = 45
+
 export function startLiveMatch(
   setup: MatchSetup,
   morale: Morale,
+  focus: MatchFocus,
   rng: Rng,
 ): LiveMatchState {
   const started = startsMatch(setup, morale, rng)
@@ -414,7 +483,7 @@ export function startLiveMatch(
   // noventa minutos.
   const expected =
     (setup.expected.goals + setup.expected.assists) * (started ? 1 : BENCH_SHARE)
-  const chances = Math.min(MAX_CHANCES, stochasticRound(expected / AVERAGE_CONVERSION, rng))
+  const chances = chanceBudget(setup, morale, expected, rng)
 
   const script = buildScript(
     {
@@ -451,40 +520,112 @@ export function startLiveMatch(
     morale,
     moraleDelta: {},
     pending: null,
-    decisionsLeft: script.filter((entry) => entry.kind === 'decisao').length,
+    timing: null,
+    lastTiming: null,
+    // Conta os dois tipos de momento. Contar so os de contexto deixava o
+    // orcamento menor que o roteiro: uma partida com tres chances de gol e
+    // duas de contexto abria duas decisoes e transformava as outras tres em
+    // lance narrado — exatamente as tres que o jogador tinha para decidir.
+    decisionsLeft: script.filter(
+      (entry) => entry.kind === 'decisao' || entry.kind === 'decisao-gol',
+    ).length,
     usedDecisions: [],
     script,
+    focus,
+    kickoff: true,
+    halftime: false,
+    focusChanged: false,
     finished: false,
   }
 }
 
 /**
+ * Quantas oportunidades claras a partida oferece ao jogador.
+ *
+ * O ponto de partida e a producao esperada dele convertida em numero de
+ * lances. Em cima disso entra o **contexto**, que e o que o modo pedia: contra
+ * um time muito superior aparecem menos oportunidades claras, contra um mais
+ * fraco aparecem mais, e nem uma coisa nem outra e determinista — o
+ * arredondamento e sorteado, entao o mesmo confronto nao devolve sempre o
+ * mesmo numero.
+ *
+ * De onde vem cada fator:
+ *
+ * - **overall, posicao e forca do elenco** ja estao dentro de `expected`, que
+ *   sai de `expectedOutputPerMatch` — a mesma funcao do modo classico.
+ * - **adversario** e a diferenca de forca entre os dois clubes.
+ * - **mando de campo** e pequeno de proposito: jogar fora nao apaga um craque.
+ * - **desempenho recente** entra pela confianca, que e o que a moral guarda de
+ *   como as ultimas partidas foram.
+ * - **companheiros** entram pela moral de elenco: quem e procurado pelo time
+ *   recebe mais bola.
+ * - **competicao** entra pela fase: mata-mata e mais travado que pontos
+ *   corridos.
+ *
+ * O resultado e o teto — o que um jogador em foco Ataque receberia. O foco
+ * filtra cada oportunidade na hora em que ela acontece, o que e o que permite
+ * trocar de foco no intervalo sem reescrever o segundo tempo.
+ */
+function chanceBudget(
+  setup: MatchSetup,
+  morale: Morale,
+  expected: number,
+  rng: Rng,
+): number {
+  const base = expected / AVERAGE_CONVERSION / NEUTRAL_ATTACK_SHARE
+
+  const opposition = clamp(
+    1 + (setup.team.strength - setup.opponent.strength) / 70,
+    0.6,
+    1.45,
+  )
+  const home = setup.atHome ? 1.08 : 0.94
+  const confidence = 1 + moraleFactor(morale.confidence) * 0.12
+  const squad = 1 + moraleFactor(morale.squad) * 0.08
+  const knockout = setup.stage ? 0.95 : 1
+
+  const raw = Math.max(base * opposition * home * confidence * squad * knockout, MIN_CHANCE_RATE)
+
+  return Math.min(stochasticRound(raw, rng), MAX_CHANCES)
+}
+
+/**
  * Com que frequencia o jogador entra em campo, de 0 a 1.
  *
- * Deliberadamente a mesma conta de `matchesPlayed`, no modo classico: nivel
- * contra elenco, com a margem de 10 porque a forca do clube descreve o elenco
- * e nao o titular medio. A relacao com o treinador desloca a linha — e o
- * caminho concreto pelo qual discutir na beira do campo custa minutos.
+ * Deliberadamente a mesma conta de `participationShare`, no modo classico:
+ * nivel contra elenco, com a margem de 10 porque a forca do clube descreve o
+ * elenco e nao o titular medio. A relacao com o treinador desloca a linha — e
+ * o caminho concreto pelo qual discutir na beira do campo custa minutos.
  *
- * Ter as duas contas iguais e o que impede o modo Jogo a Jogo de inflar
- * presencas: sem isso um garoto de 16 anos disputava 37 dos 38 jogos da Serie
- * C, contra 28 no modo classico, e a carreira inteira andava mais rapido.
+ * Ter as duas contas iguais e o que impede os dois modos de divergirem: sem
+ * isso um garoto de 16 anos disputava 37 dos 38 jogos num modo e 28 no outro,
+ * e a carreira inteira andava em ritmos diferentes.
  */
 export function appearanceShare(setup: MatchSetup, morale: Morale): number {
-  const gap = setup.overall - setup.team.strength + 10
-
-  return clamp(0.55 + gap / 20 + moraleFactor(morale.coach) * 0.12, 0.05, 1)
+  return clamp(
+    participationShare(setup.overall, setup.team.strength) +
+      moraleFactor(morale.coach) * 0.08,
+    MIN_PARTICIPATION,
+    1,
+  )
 }
 
 /**
  * Quanto da presenca vem de comecar jogando.
  *
- * O resto entra do banco. Quem esta acima do elenco quase nao e reserva; quem
- * esta abaixo aparece mais vezes entrando no segundo tempo do que como titular
- * — e a relacao com o treinador move essa fronteira nos dois sentidos.
+ * O resto entra do banco. Quem esta acima do elenco e titular praticamente
+ * sempre; quem esta abaixo ainda comeca a maioria das partidas, e a relacao
+ * com o treinador move essa fronteira nos dois sentidos.
+ *
+ * O piso e alto de proposito. A versao anterior deixava um jogador jovem no
+ * banco com frequencia realista e carreira chata: eram partidas inteiras
+ * assistindo, sem nenhuma decisao para tomar. A disputa por posicao continua
+ * existindo — ela aparece nos minutos e na substituicao, nao em ficar de fora.
  */
 function startShare(setup: MatchSetup, morale: Morale): number {
-  return clamp(0.62 + moraleFactor(morale.coach) * 0.2, 0.3, 0.92)
+  const gap = setup.overall - setup.team.strength
+
+  return clamp(0.72 + gap / 40 + moraleFactor(morale.coach) * 0.15, 0.65, 0.97)
 }
 
 /** Se o jogador comeca jogando. */
@@ -550,6 +691,12 @@ function buildScript(
   // treinador mexe no time uma vez, e o que muda e de que lado o jogador esta.
   entries.push({ minute: range(rng, SUB_WINDOW[0], SUB_WINDOW[1]), kind: 'substituicao' })
 
+  // O intervalo entra sempre no mesmo minuto e nao consome nenhum slot: ele
+  // nao e um lance, e uma pausa. Sem ele o foco escolhido antes do apito
+  // valeria para os noventa minutos, e o modo perderia a leitura de jogo —
+  // que e o motivo de o foco ser trocavel.
+  entries.push({ minute: HALFTIME_MINUTE, kind: 'intervalo' })
+
   return entries.sort((a, b) => a.minute - b.minute)
 }
 
@@ -561,7 +708,10 @@ function buildScript(
  * decisao, `pending` volta preenchido e nada mais avanca ate a escolha.
  */
 export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchState {
-  if (state.finished || state.pending) return state
+  if (state.finished || state.pending || state.timing) return state
+  // Antes do apito e no intervalo quem destrava e o jogador, escolhendo o
+  // foco. O relogio nao corre por cima de uma decisao dele.
+  if (state.kickoff || state.halftime) return state
 
   const next = state.script[0]
 
@@ -593,6 +743,22 @@ export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchStat
 
     case 'substituicao':
       return resolveSubstitution(at, rng)
+
+    case 'intervalo':
+      return {
+        ...at,
+        halftime: true,
+        events: [
+          ...at.events,
+          {
+            minute: HALFTIME_MINUTE,
+            type: 'decisao',
+            side: 'team',
+            text: `Intervalo: ${at.teamGoals} a ${at.opponentGoals}.`,
+            byPlayer: false,
+          },
+        ],
+      }
 
     case 'decisao-gol':
       return openDecision(at, rng, true)
@@ -648,28 +814,52 @@ function openDecision(
     used: state.usedDecisions,
   }
 
-  // A chance de gol nao existe para toda posicao em toda fase do jogo. Quando
-  // nao ha nenhuma disponivel, o momento vira um de contexto em vez de sumir —
-  // o orcamento da partida ja contava com ele.
-  const options = orEmpty(
-    eligibleDecisions({ ...query, productive }),
-    () => eligibleDecisions({ ...query, productive: !productive }),
-  )
+  // O foco decide se a oportunidade ofensiva de fato acontece.
+  //
+  // O orcamento foi montado no teto — o que um jogador em Ataque receberia — e
+  // e aqui, no instante do lance, que ele e filtrado. Fazer assim, e nao no
+  // roteiro, e o que permite trocar de foco no intervalo: o slot ja existe, e
+  // o que muda e no que ele se transforma. Uma oportunidade recusada pelo foco
+  // vira lance defensivo em vez de sumir — quem joga em Defesa troca gol por
+  // desarme, nao por tempo parado.
+  const offensive = productive && rng() < FOCUS_ATTACK_SHARE[state.focus]
+
+  // Um slot de contexto continua sendo de contexto. Deixar o filtro cair para
+  // "qualquer momento" quando nao ha defensivo disponivel abria uma segunda
+  // porta para chance de gol, fora do orcamento — e a producao da temporada
+  // saia pelo teto sem que a conta de chances tivesse mudado.
+  const options = offensive
+    ? orEmpty(
+        eligibleDecisions({ ...query, productive: true }),
+        () => eligibleDecisions({ ...query, productive: false }),
+      )
+    : orEmpty(
+        // O slot ofensivo recusado pelo foco vira lance defensivo; o de
+        // contexto ja nasce assim.
+        productive
+          ? eligibleDecisions({ ...query, side: 'defesa' })
+          : eligibleDecisions({ ...query, productive: false }),
+        () => eligibleDecisions({ ...query, productive: false }),
+      )
 
   if (options.length === 0) return { ...state, decisionsLeft: 0 }
 
-  const spec = weightedPick(options, rng)
+  const spec = weightedPick(options, state.focus, rng)
 
   return {
     ...state,
     usedDecisions: [...state.usedDecisions, spec.id],
+    // O resultado do clique anterior sai da tela quando um lance novo comeca.
+    lastTiming: null,
     pending: {
       id: spec.id,
       prompt: fill(spec.prompt, state.setup),
+      side: spec.side,
       options: spec.options.map((option) => ({
         label: option.label,
         detail: option.detail,
-        chance: successChance(option, state),
+        chance: successChance(option, state, spec.side),
+        timing: timingKindOf(option),
       })),
     },
   }
@@ -694,9 +884,129 @@ export function chooseLiveOption(
   const option = spec?.options[index]
   if (!spec || !option) return state
 
-  const chance = successChance(option, state)
-  const succeeded = rng() < chance
+  const kind = timingKindOf(option)
+
+  // Lance de execucao nao se resolve aqui: a escolha diz o que ele vai tentar,
+  // e a barra diz como saiu. O `pending` fica aberto para a interface poder
+  // continuar mostrando o que ele escolheu enquanto o cursor corre.
+  if (kind) {
+    return {
+      ...state,
+      lastTiming: null,
+      timing: {
+        optionIndex: index,
+        challenge: buildTiming(
+          kind,
+          successChance(option, state, spec.side),
+          momentPressure(state),
+          rng,
+        ),
+      },
+    }
+  }
+
+  return applyChoice(state, spec, index, null, rng)
+}
+
+/**
+ * O clique na barra.
+ *
+ * `cursor` e a posicao do cursor no instante do clique, em 0..1. Quem mede e a
+ * interface — o motor nao tem relogio nem sabe quantos quadros passaram.
+ */
+export function resolveLiveTiming(
+  state: LiveMatchState,
+  cursor: number,
+  rng: Rng,
+): LiveMatchState {
+  const open = state.timing
+  const pending = state.pending
+  if (!open || !pending) return state
+
+  const spec = specById(pending.id)
+  if (!spec) return state
+
+  const outcome = resolveTiming(open.challenge, cursor)
+
+  return applyChoice(state, spec, open.optionIndex, outcome, rng)
+}
+
+/**
+ * A janela de cinco segundos passou sem clique.
+ *
+ * Vale como erro, e nao como lance neutro: o jogador ja tinha escolhido o que
+ * ia tentar, e nao tentar tem o mesmo custo de tentar e errar. Se ficar de
+ * graca, esperar viraria a jogada segura em todo lance dificil.
+ */
+export function missLiveTiming(state: LiveMatchState, rng: Rng): LiveMatchState {
+  const open = state.timing
+  const pending = state.pending
+  if (!open || !pending) return state
+
+  const spec = specById(pending.id)
+  if (!spec) return state
+
+  return applyChoice(state, spec, open.optionIndex, missedTiming(), rng)
+}
+
+/**
+ * O peso do momento, de 0 a 1.
+ *
+ * E o que faz a barra correr mais rapido num lance decisivo do que num lance
+ * qualquer de meio de tabela. Nao mexe na chance do lance — o verde continua
+ * do tamanho que era, e por isso o balanceamento nao se move. O que muda e o
+ * tempo que o jogador tem para acertar o verde, que e a parte da mao dele.
+ *
+ * As quatro parcelas sao as que um jogador de verdade sentiria: onde a partida
+ * vale mais, quanto falta para acabar, se o placar ainda esta em disputa e o
+ * tamanho de quem esta do outro lado.
+ */
+export function momentPressure(state: LiveMatchState): number {
+  const { setup } = state
+
+  // Mata-mata pesa; final pesa mais.
+  const stage = setup.stage ? (setup.stage === 'Final' ? 0.5 : 0.3) : 0
+
+  // Os ultimos quinze minutos. Antes disso ainda da para consertar.
+  const late = state.minute >= 75 ? 0.25 : state.minute >= 60 ? 0.12 : 0
+
+  // Placar em disputa. Goleada, para qualquer lado, alivia a mao.
+  const margin = Math.abs(state.teamGoals - state.opponentGoals)
+  const tight = margin <= 1 ? 0.2 : margin === 2 ? 0.08 : 0
+
+  const opposition = clamp((setup.opponent.strength - setup.team.strength) / 30, 0, 1) * 0.3
+
+  return clamp(stage + late + tight + opposition, 0, 1)
+}
+
+/**
+ * Aplica a escolha, tenha ela passado pela barra ou nao.
+ *
+ * Com `outcome` nulo o lance e resolvido no sorteio, como sempre foi. Com
+ * `outcome`, quem decide e o timing: dentro do verde o lance sai, e o miolo
+ * ainda soma nota e confianca. O verde tem a largura da propria chance, entao
+ * um clique aleatorio devolve exatamente o que o sorteio devolveria — e todo
+ * o ganho de quem joga bem vem de mirar, nao de uma regra mais generosa.
+ */
+function applyChoice(
+  state: LiveMatchState,
+  spec: DecisionSpec,
+  index: number,
+  outcome: TimingOutcome | null,
+  rng: Rng,
+): LiveMatchState {
+  const option = spec.options[index]
+
+  const chance = successChance(option, state, spec.side)
+  const succeeded = outcome ? connected(outcome.band) : rng() < chance
   const effect = succeeded ? option.success : option.failure
+
+  // Execucao perfeita rende mais que execucao apenas correta. E pequeno de
+  // proposito: o gol vale o mesmo, o que muda e a nota e a cabeca do jogador.
+  const perfect = outcome?.band === 'perfeito'
+  const bonus = perfect
+    ? { rating: 0.25, morale: { confidence: 3 } as MoraleDelta }
+    : { rating: 0, morale: {} as MoraleDelta }
 
   // A nota mede o que ele fez **alem do que a jogada prometia**.
   //
@@ -710,8 +1020,21 @@ export function chooseLiveOption(
     chance * (option.success.rating ?? 0) + (1 - chance) * (option.failure.rating ?? 0)
 
   const applied = applyEffect(
-    { ...state, pending: null, decisionsLeft: state.decisionsLeft - 1 },
-    effect,
+    {
+      ...state,
+      pending: null,
+      timing: null,
+      lastTiming: outcome,
+      decisionsLeft: state.decisionsLeft - 1,
+    },
+    {
+      ...effect,
+      rating: (effect.rating ?? 0) + bonus.rating,
+      morale: mergeDeltas([effect.morale ?? {}, bonus.morale]),
+      // O texto de erro nao serve para quem nao chegou a executar: "bate
+      // cruzado e passa raspando a trave" descreve um chute que nao houve.
+      text: outcome?.band === 'perdido' ? hesitationText(option) : effect.text,
+    },
     expectedRating,
   )
 
@@ -724,6 +1047,13 @@ export function chooseLiveOption(
         byPlayer: true,
       })
     : applied
+}
+
+/** O lance que morreu na hesitacao. */
+function hesitationText(option: DecisionOption): string {
+  return timingKindOf(option) === 'finalizacao'
+    ? '{jogador} demora para bater e a zaga chega antes.'
+    : '{jogador} segura demais e a janela do passe fecha.'
 }
 
 function effectType(effect: LiveEffect): LiveEventType {
@@ -768,7 +1098,11 @@ function applyEffect(
  * qualidade de quem esta do outro lado. Passe tambem depende do elenco — nao
  * adianta escolher tocar quando ninguem se movimenta para receber.
  */
-export function successChance(option: DecisionOption, state: LiveMatchState): number {
+export function successChance(
+  option: DecisionOption,
+  state: LiveMatchState,
+  side: DecisionSide = 'neutro',
+): number {
   // Algumas opcoes nao tem como dar errado — pedir substituicao, sair de campo
   // aplaudindo. Passa-las pelo `clamp` devolveria 95%, e a interface anunciaria
   // um risco que nao existe.
@@ -780,7 +1114,15 @@ export function successChance(option: DecisionOption, state: LiveMatchState): nu
   const opposition =
     (state.setup.opponent.strength - state.setup.team.strength) / 400
 
-  return clamp(option.base + attribute + confidence + squad - opposition, 0.05, 0.95)
+  // O foco tambem inclina o lance, de leve: quem esta jogando pelo ataque
+  // chega melhor na frente e pior no recuo, e vice-versa.
+  const focus = focusEdge(state.focus, side)
+
+  return clamp(
+    option.base + attribute + confidence + squad + focus - opposition,
+    0.05,
+    0.95,
+  )
 }
 
 /** ±0,2 no maximo: o atributo inclina o lance, nao decide sozinho. */
@@ -852,11 +1194,24 @@ export function simulateRestOfMatch(state: LiveMatchState, rng: Rng): LiveMatchS
   let current = state
   let guard = 0
 
-  while (!current.finished && guard < 200) {
+  while (!current.finished && guard < 400) {
     guard++
+
+    // A barra tambem e resolvida — com um clique cego, que devolve exatamente
+    // a chance original do lance. Pular a partida nunca e melhor nem pior do
+    // que joga-la sem acertar o timing nenhuma vez.
+    if (current.timing) {
+      current = resolveLiveTiming(current, blindCursor(rng), rng)
+      continue
+    }
 
     if (current.pending) {
       current = chooseLiveOption(current, autoChoice(current, rng), rng)
+      continue
+    }
+
+    if (current.kickoff || current.halftime) {
+      current = { ...current, kickoff: false, halftime: false }
       continue
     }
 
@@ -911,9 +1266,40 @@ export function finishLiveMatch(state: LiveMatchState): LiveMatchState {
     minute: MATCH_MINUTES,
     finished: true,
     pending: null,
+    timing: null,
+    kickoff: false,
+    halftime: false,
     moraleDelta: mergeDeltas([state.moraleDelta, outcome]),
     player: { ...player, rating, minutes },
   }
+}
+
+/**
+ * Troca o foco tatico.
+ *
+ * So vale com a partida parada — antes do apito ou no intervalo. Deixar trocar
+ * a qualquer momento transformaria o foco em botao de otimizacao: bastava
+ * mudar para Ataque quando a chance aparecesse na tela, e a escolha deixaria
+ * de ser uma leitura de jogo.
+ */
+export function setLiveFocus(state: LiveMatchState, focus: MatchFocus): LiveMatchState {
+  if (!state.kickoff && !state.halftime) return state
+  if (focus === state.focus) return state
+  // Uma troca por partida, e ela e a do intervalo. No apito inicial ainda nao
+  // houve partida nenhuma para ler, entao escolher ali nao gasta a troca.
+  if (state.halftime && state.focusChanged) return state
+
+  return { ...state, focus, focusChanged: state.focusChanged || state.halftime }
+}
+
+/** Apito inicial. */
+export function kickOffLiveMatch(state: LiveMatchState): LiveMatchState {
+  return state.kickoff ? { ...state, kickoff: false } : state
+}
+
+/** Volta do intervalo. */
+export function resumeLiveMatch(state: LiveMatchState): LiveMatchState {
+  return state.halftime ? { ...state, halftime: false } : state
 }
 
 /** A moral da carreira depois desta partida. */
@@ -983,6 +1369,8 @@ function autoChoice(state: LiveMatchState, rng: Rng): number {
   const spec = specById(state.pending?.id ?? '')
   if (!spec) return 0
 
+  const side = spec.side
+
   const { goals, assists } = state.setup.expected
 
   // A opcao que nao produz nada e uma saida, nao o padrao. Com ela pesando o
@@ -997,7 +1385,7 @@ function autoChoice(state: LiveMatchState, rng: Rng): number {
         ? assists
         : neutral
 
-    return successChance(option, state) * Math.max(affinity, 0.02)
+    return successChance(option, state, side) * Math.max(affinity, 0.02)
   })
 
   const total = weights.reduce((sum, weight) => sum + weight, 0)
@@ -1016,13 +1404,14 @@ function orEmpty<T>(items: T[], fallback: () => T[]): T[] {
   return items.length > 0 ? items : fallback()
 }
 
-function weightedPick(specs: DecisionSpec[], rng: Rng): DecisionSpec {
-  const total = specs.reduce((sum, spec) => sum + spec.weight, 0)
+function weightedPick(specs: DecisionSpec[], focus: MatchFocus, rng: Rng): DecisionSpec {
+  const weights = specs.map((spec) => weightFor(spec, focus))
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
   let draw = rng() * total
 
-  for (const spec of specs) {
-    draw -= spec.weight
-    if (draw <= 0) return spec
+  for (let index = 0; index < specs.length; index++) {
+    draw -= weights[index]
+    if (draw <= 0) return specs[index]
   }
 
   return specs[specs.length - 1]

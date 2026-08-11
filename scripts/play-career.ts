@@ -9,10 +9,12 @@
  */
 import {
   playSeason,
+  renewContract,
   resolveTransfer,
   startCareer,
   type CareerState,
 } from '../lib/sim/career'
+import { formatSalary } from '../lib/sim/contracts'
 import { clubById, leagueOf } from '../lib/sim/data/clubs'
 import { COUNTRY_LABEL } from '../lib/sim/data/leagues'
 import { LEGENDS } from '../lib/sim/data/legends'
@@ -132,8 +134,12 @@ while (!state.retired) {
 
   state = result.state
 
-  // Decisao de transferencia: o clube mais forte que ainda nao encosta o jogador.
-  if (state.offers.length > 0) {
+  // Decisao de transferencia: o clube mais forte que ainda nao encosta o
+  // jogador. Com o contrato vencido a regra muda — ai vale qualquer clube em
+  // que ele caiba, porque a alternativa e ficar sem time.
+  const expiring = state.contract.seasonsLeft <= 0
+
+  if (state.offers.length > 0 || state.renewal) {
     const viable = state.offers
       .map((offer) => clubById(offer.clubId)!)
       .filter((club) => club.strength <= record.overall + 5)
@@ -142,10 +148,15 @@ while (!state.retired) {
     const current = clubById(state.clubId)!
     const target = viable[0]
 
-    if (target && target.strength > current.strength) {
+    if (target && (expiring || target.strength > current.strength)) {
       state = resolveTransfer(state, target.id)
       transfers++
       console.log(`              → transferido para o ${target.name}`)
+    } else if (state.renewal) {
+      state = renewContract(state, state.renewal)
+      console.log(
+        `              → renovou com o ${current.name} por ${state.contract.years} temporada(s)`,
+      )
     } else {
       state = resolveTransfer(state, null)
     }
@@ -191,6 +202,10 @@ console.log(
 console.log(`  ${state.seasons.length} temporadas · ${COUNTRY_LABEL.BR.flag} ${state.config.position}`)
 console.log(`  ${totals.matches} jogos · ${totals.goals} gols · ${totals.assists} assistencias`)
 console.log(`  ${clubs.size} clubes · ${transfers} transferencias · pico de €${peakValue}M`)
+console.log(
+  `  ganhos ${formatSalary(state.earnings)} · maior salario ` +
+    `${formatSalary(Math.max(...state.seasons.map((season) => season.salary)))} por temporada`,
+)
 
 const national = state.seasons.reduce(
   (sum, season) => {

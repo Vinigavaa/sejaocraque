@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { careerShareText } from '@/lib/game/shareText'
 import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
+import { formatSalary } from '@/lib/sim/contracts'
 import { careerTotals, ladderRung, LADDER_LABELS } from '@/lib/sim/ladder'
 import { shareCardImage } from '@/lib/ui/shareImage'
 
@@ -149,6 +150,7 @@ export function End({ game }: { game: Game }) {
             <Stat value={totals.titles} label="títulos" />
             <Stat value={totals.ballonDOrs} label="bolas de ouro" />
             <Stat value={totals.clubs} label="clubes" />
+            <Stat value={formatSalary(career.earnings)} label="ganhos" size={20} />
           </div>
 
         </>
@@ -158,6 +160,23 @@ export function End({ game }: { game: Game }) {
       <Display size={26} style={{ marginTop: scaled(6) }}>
         {career.config.name}
       </Display>
+      {/* Parar aos 36 depois de uma década de contratos é uma coisa; ficar sem
+          clube no meio do caminho é outra, e a tela não pode contar as duas do
+          mesmo jeito. */}
+      <div
+        style={{
+          marginTop: scaled(8),
+          fontSize: scaled(12),
+          color: career.retiredFree ? t.dangerText : t.muted,
+          lineHeight: 1.5,
+        }}
+      >
+        {career.retiredFree
+          ? `Aos ${career.age} anos, sem contrato e sem proposta aceita, você
+             pendurou as chuteiras.`
+          : `Encerrou aos ${career.age} anos, depois de ${career.seasons.length}
+             temporadas como profissional.`}
+      </div>
 
       <SectionLabel style={{ marginTop: scaled(28) }}>Card de compartilhamento</SectionLabel>
       {/* A `ref` fica neste wrapper e não dentro do card: é exatamente este nó

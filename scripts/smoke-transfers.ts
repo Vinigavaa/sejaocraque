@@ -12,13 +12,19 @@ import { leagueOf } from '../lib/sim/data/clubs'
 import {
   playSeason,
   resolveTransfer,
+  renewContract,
+  setFarewellLeague,
   setPreferences,
   startCareer,
   type CareerState,
 } from '../lib/sim/career'
 import { currentOverall } from '../lib/sim/progression'
 import { createRng } from '../lib/sim/rng'
-import { matchesPreference, type TransferPreferences } from '../lib/sim/transfers'
+import {
+  FAREWELL_AGE,
+  matchesPreference,
+  type TransferPreferences,
+} from '../lib/sim/transfers'
 import { overallFor } from '../lib/sim/positions'
 import { ALL_ATTRS, type PlayerAttrs, type Position } from '../lib/sim/types'
 
@@ -126,8 +132,13 @@ function runCareer(
       .filter((club) => club && club.strength >= overall - 4)
       .sort((a, b) => (b?.strength ?? 0) - (a?.strength ?? 0))[0]
 
+    // Sem proposta aceitavel, renova. Recusar tudo com o contrato vencido
+    // encerraria a carreira, e o que este teste mede e o mercado ao longo de
+    // uma carreira inteira.
     const before = state.clubId
-    state = resolveTransfer(state, best ? best.id : null)
+    if (best) state = resolveTransfer(state, best.id)
+    else if (state.renewal) state = renewContract(state, state.renewal)
+    else state = resolveTransfer(state, null)
     if (state.clubId !== before) sample.transfers++
 
     clubs.add(state.clubId)
@@ -218,7 +229,11 @@ for (let index = 0; index < CAREERS; index++) {
       const country = leagueOf(club).country
       destinations.set(country, (destinations.get(country) ?? 0) + 1)
     }
-    state = resolveTransfer(state, state.offers[0]?.clubId ?? null)
+    state = state.offers[0]
+      ? resolveTransfer(state, state.offers[0].clubId)
+      : state.renewal
+        ? renewContract(state, state.renewal)
+        : resolveTransfer(state, null)
     guard++
   }
 }
@@ -228,4 +243,65 @@ const ranked = [...destinations.entries()].sort((a, b) => b[1] - a[1])
 const totalOffers = ranked.reduce((sum, [, count]) => sum + count, 0)
 for (const [country, count] of ranked.slice(0, 6)) {
   console.log(`  ${country}  ${count}  (${((count / totalOffers) * 100).toFixed(0)}%)`)
+}
+
+/**
+ * A promessa do fim de carreira: dos 31 anos em diante, o jogador que escolheu
+ * uma liga recebe pelo menos uma proposta de la por temporada — enquanto tiver
+ * nivel para algum clube de la.
+ *
+ * As temporadas sem proposta sao esperadas e devem ser as do jogador que ja
+ * caiu abaixo do teto da liga escolhida. O numero util aqui e a cobertura entre
+ * quem ainda tem nivel.
+ */
+{
+  let seasons = 0
+  let covered = 0
+
+  for (let index = 0; index < CAREERS; index++) {
+    const seed = `f${index}`
+    const rng = createRng(seed)
+    let state: CareerState = startCareer({
+      seed,
+      name: 'Teste',
+      nationality: 'BR',
+      position: 'ATA',
+      shirtNumber: 10,
+      peakAttrs: attrsFor(80, 'ATA', rng),
+      careerMode: 'classico',
+    })
+
+    let guard = 0
+    while (!state.retired && guard < 30) {
+      if (state.age >= FAREWELL_AGE && !state.farewellLeagueId) {
+        state = setFarewellLeague(state, 'sa-1')
+      }
+
+      const before = state.age
+      state = playSeason(state, null).state
+
+      if (before >= FAREWELL_AGE) {
+        seasons++
+        const fromLeague = state.offers.some(
+          (offer) => clubById(offer.clubId)?.leagueId === 'sa-1',
+        )
+        if (fromLeague) covered++
+      }
+
+      // Fica onde esta, mas renova quando o contrato acaba: sem isso a
+      // carreira encerraria por falta de clube antes dos 31 e o teste mediria
+      // uma amostra vazia.
+      state = state.renewal
+        ? renewContract(state, state.renewal)
+        : resolveTransfer(state, null)
+      guard++
+    }
+  }
+
+  console.log('\n── veterano pedindo a Saudi Pro League (a partir dos 31) ──')
+  console.log(`  temporadas apos a escolha  ${seasons}`)
+  console.log(
+    `  com proposta da liga       ${covered}/${seasons}` +
+      ` (${((covered / Math.max(1, seasons)) * 100).toFixed(0)}%)`,
+  )
 }

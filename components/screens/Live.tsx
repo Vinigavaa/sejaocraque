@@ -3,12 +3,20 @@
 import { useEffect } from 'react'
 
 import type { Game } from '@/lib/game/useGame'
+import {
+  FOCUS_DETAIL,
+  FOCUS_LABEL,
+  MATCH_FOCUSES,
+  type MatchFocus,
+} from '@/lib/sim/liveFocus'
 import { MATCH_MINUTES } from '@/lib/sim/liveMatch'
+import type { TimingOutcome } from '@/lib/sim/liveTiming'
 
 import { ClubCrest } from '../Crest'
 import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
 import { Display, GhostButton, PrimaryButton, scaled, SectionLabel, Stat, t } from '../shared'
+import { TimingBar } from '../TimingBar'
 
 /**
  * Ritmo da partida jogada.
@@ -23,9 +31,16 @@ const STEP_MS = 620
 export function Live({ game }: { game: Game }) {
   const live = game.live
 
-  // O relógio só corre quando não há decisão na mesa: um momento aberto
-  // congela a partida até a escolha, que é a razão de o modo existir.
-  const running = Boolean(live) && !live?.pending && !live?.finished
+  // O relógio só corre quando nada depende do jogador: decisão aberta, barra
+  // de timing correndo, apito inicial e intervalo congelam a partida — é a
+  // razão de o modo existir.
+  const running =
+    Boolean(live) &&
+    !live?.pending &&
+    !live?.timing &&
+    !live?.kickoff &&
+    !live?.halftime &&
+    !live?.finished
 
   // A dependência é a função, e não `game`: o hook devolve um objeto novo a
   // cada render, e depender dele derrubava e recriava o relógio a cada lance.
@@ -200,6 +215,17 @@ export function Live({ game }: { game: Game }) {
         <Stat value={statusOf(live)} label="Situação" size={20} />
       </div>
 
+      {(live.kickoff || live.halftime) && (
+        <FocusPanel
+          title={live.kickoff ? 'Antes do apito' : `Intervalo · ${live.minute}'`}
+          focus={live.focus}
+          locked={live.halftime && live.focusChanged}
+          onChoose={game.chooseFocus}
+          onConfirm={live.kickoff ? game.kickOffLive : game.resumeLive}
+          confirmLabel={live.kickoff ? 'COMEÇAR A PARTIDA →' : 'VOLTAR PARA O SEGUNDO TEMPO →'}
+        />
+      )}
+
       {live.pending ? (
         <div
           data-motion="event"
@@ -223,6 +249,28 @@ export function Live({ game }: { game: Game }) {
             {live.pending.prompt}
           </div>
 
+          {live.timing ? (
+            <div style={{ marginTop: scaled(14) }}>
+              <TimingBar
+                challenge={live.timing.challenge}
+                label={live.pending.options[live.timing.optionIndex].label}
+                onHit={game.resolveTiming}
+                onExpire={game.expireTiming}
+              />
+              <div
+                style={{
+                  marginTop: scaled(8),
+                  fontSize: scaled(11),
+                  color: t.mutedStrong,
+                  lineHeight: 1.4,
+                }}
+              >
+                {live.timing.challenge.kind === 'finalizacao'
+                  ? 'Acerte a trave para mandar no canto. Quanto mais no meio, melhor a finalização.'
+                  : 'Acerte a bola para o passe sair na medida. Quanto mais no meio, melhor o passe.'}
+              </div>
+            </div>
+          ) : (
           <div
             style={{
               marginTop: scaled(14),
@@ -278,20 +326,27 @@ export function Live({ game }: { game: Game }) {
               </button>
             ))}
           </div>
+          )}
         </div>
       ) : (
-        !live.finished && (
+        !live.finished &&
+        !live.kickoff &&
+        !live.halftime && (
           <div
             style={{
               marginTop: scaled(16),
               fontSize: scaled(11),
               color: t.faintText,
               textAlign: 'center',
+              lineHeight: 1.5,
             }}
           >
-            {live.onPitch
-              ? 'Você está em campo. O jogo para quando algo depender de você.'
-              : 'No banco, esperando o treinador.'}
+            {live.lastTiming && <TimingFeedback outcome={live.lastTiming} />}
+            <div>
+              {live.onPitch
+                ? `Foco: ${FOCUS_LABEL[live.focus]}. O jogo para quando algo depender de você.`
+                : 'No banco, esperando o treinador.'}
+            </div>
           </div>
         )
       )}
@@ -308,6 +363,123 @@ export function Live({ game }: { game: Game }) {
         </GhostButton>
       )}
     </ScreenLayout>
+  )
+}
+
+/**
+ * A escolha do foco, antes do apito e no intervalo.
+ *
+ * É o único lugar onde ela acontece. Deixar trocar durante o jogo faria do
+ * foco um botão de otimização — bastava mudar para Ataque assim que a chance
+ * aparecesse na tela, e a leitura de jogo deixaria de existir.
+ */
+function FocusPanel({
+  title,
+  focus,
+  locked,
+  onChoose,
+  onConfirm,
+  confirmLabel,
+}: {
+  title: string
+  focus: MatchFocus
+  locked: boolean
+  onChoose: (focus: MatchFocus) => void
+  onConfirm: () => void
+  confirmLabel: string
+}) {
+  return (
+    <div
+      data-motion="event"
+      style={{
+        marginTop: scaled(16),
+        border: `2px solid ${t.accent}`,
+        borderRadius: 8,
+        background: t.card,
+        padding: scaled(16),
+      }}
+    >
+      <SectionLabel>{title} · foco tático</SectionLabel>
+
+      <div
+        style={{
+          marginTop: scaled(10),
+          display: 'flex',
+          flexDirection: 'column',
+          gap: scaled(8),
+        }}
+      >
+        {MATCH_FOCUSES.map((option) => {
+          const active = option === focus
+
+          return (
+            <button
+              key={option}
+              onClick={() => onChoose(option)}
+              disabled={locked && !active}
+              style={{
+                textAlign: 'left',
+                background: active ? t.accentSoft : 'transparent',
+                border: `2px solid ${active ? t.accent : t.line}`,
+                borderRadius: 6,
+                padding: scaled(11),
+                color: t.text,
+                cursor: locked && !active ? 'default' : 'pointer',
+                opacity: locked && !active ? 0.4 : 1,
+                fontFamily: 'inherit',
+              }}
+            >
+              <div style={{ fontSize: scaled(14), fontWeight: 800 }}>
+                {FOCUS_LABEL[option]}
+              </div>
+              <div
+                style={{
+                  marginTop: scaled(3),
+                  fontSize: scaled(11),
+                  color: t.mutedStrong,
+                  lineHeight: 1.4,
+                }}
+              >
+                {FOCUS_DETAIL[option]}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      <div
+        style={{
+          marginTop: scaled(10),
+          fontSize: scaled(10),
+          color: t.faintText,
+          lineHeight: 1.4,
+        }}
+      >
+        {locked
+          ? 'Você já mexeu no foco nesta partida.'
+          : 'Dá para mudar uma vez, no intervalo.'}
+      </div>
+
+      <PrimaryButton onClick={onConfirm} style={{ marginTop: scaled(12) }}>
+        {confirmLabel}
+      </PrimaryButton>
+    </div>
+  )
+}
+
+/** O que saiu do último clique na barra. */
+function TimingFeedback({ outcome }: { outcome: TimingOutcome }) {
+  const [text, color] =
+    outcome.band === 'perfeito'
+      ? ['No ponto exato.', t.greenText]
+      : outcome.band === 'bom'
+        ? ['Timing bom.', t.goldText]
+        : outcome.band === 'perdido'
+          ? ['Você perdeu a chance.', t.dangerText]
+          : ['Timing errado.', t.dangerText]
+
+  return (
+    <div style={{ color, fontWeight: 700, marginBottom: scaled(4) }}>{text}</div>
   )
 }
 

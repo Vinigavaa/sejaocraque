@@ -38,6 +38,8 @@ export function SeasonReview({ game }: { game: Game }) {
             ))}
           </div>
 
+          {game.seasonLog.length > 0 && <MatchdayLogList game={game} />}
+
           {record.national && (
             <div style={{ marginTop: scaled(20) }}>
               <NationalMatches
@@ -208,6 +210,83 @@ export function SeasonReview({ game }: { game: Game }) {
         {last ? 'VER FIM DE CARREIRA →' : 'PRÓXIMA TEMPORADA →'}
       </PrimaryButton>
     </ScreenLayout>
+  )
+}
+
+/**
+ * A liga rodada a rodada.
+ *
+ * Existe por causa do "pular para o fim da temporada": as partidas foram
+ * disputadas de verdade, e sem esta lista o jogador só veria os totais de um
+ * campeonato que ele não acompanhou. Quem jogou rodada a rodada também ganha —
+ * é o retrospecto do ano num lugar só.
+ */
+function MatchdayLogList({ game }: { game: Game }) {
+  return (
+    <div style={{ marginTop: scaled(20) }}>
+      <SectionLabel>Rodada a rodada</SectionLabel>
+      <div
+        style={{
+          marginTop: scaled(8),
+          display: 'flex',
+          flexDirection: 'column',
+          gap: scaled(4),
+        }}
+      >
+        {game.seasonLog.map((entry) => {
+          const won = entry.teamGoals > entry.opponentGoals
+          const lost = entry.teamGoals < entry.opponentGoals
+          const { player } = entry
+
+          return (
+            <div
+              key={entry.round}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: scaled(8),
+                padding: `${scaled(6)} ${scaled(10)}`,
+                borderRadius: 6,
+                background: t.card,
+                border: `1px solid ${t.lineSoft}`,
+                fontSize: scaled(11),
+              }}
+            >
+              <div style={{ width: 22, color: t.faintText }}>{entry.round}ª</div>
+              <ClubCrest clubId={entry.opponentId} size={16} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {clubById(entry.opponentId)?.name}
+                </div>
+                <div style={{ fontSize: scaled(9), color: t.faintText }}>
+                  {entry.atHome ? 'em casa' : 'fora'}
+                  {player.played
+                    ? ` · ${player.goals}G ${player.assists}A · nota ${player.rating.toFixed(1)}`
+                    : ' · não entrou'}
+                  {player.yellow > 0 && ' · amarelo'}
+                  {player.red && ' · vermelho'}
+                  {player.injured && ' · lesão'}
+                </div>
+              </div>
+              <div
+                style={{
+                  fontWeight: 800,
+                  color: won ? t.greenText : lost ? t.dangerText : t.muted,
+                }}
+              >
+                {entry.teamGoals}–{entry.opponentGoals}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

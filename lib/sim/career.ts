@@ -47,6 +47,15 @@ import {
   type LeagueOutcome,
   type PlayerSeasonStats,
 } from './season'
+import {
+  desiredYears,
+  fairSalary,
+  wantsToRenew,
+  START_CONTRACT_YEARS,
+  type Contract,
+  type ContractInput,
+  type ContractTerms,
+} from './contracts'
 import { simulateGroupTournament } from './tournament'
 import {
   buildOffers,
@@ -168,6 +177,8 @@ export type SeasonRecord = {
   clubLift: number
   /** Valor de mercado ao fim da temporada, em milhoes de euros. */
   marketValue: number
+  /** Salario da temporada, em milhoes de euros. */
+  salary: number
   /** Copa nacional e, quando classificado, competicao continental. */
   cups: CompetitionRun[]
   /** Null quando o jogador nao foi convocado. */
@@ -204,6 +215,22 @@ export type CareerState = {
   retired: boolean
   /** Propostas na mesa. Vazio quando ninguem procurou o jogador. */
   offers: TransferOffer[]
+  /** O contrato em vigor. Todo jogador sempre tem um — ou encerrou a carreira. */
+  contract: Contract
+  /**
+   * A renovacao que o clube atual poe na mesa, ou `null` quando ele nao quer
+   * renovar (ou quando ainda falta muito para o contrato acabar).
+   */
+  renewal: ContractTerms | null
+  /** Quanto o jogador ja recebeu de salario na carreira, em milhoes de euros. */
+  earnings: number
+  /**
+   * Se a carreira acabou por falta de clube, e nao por idade.
+   *
+   * Muda o texto do fim de carreira: pendurar as chuteiras aos 36 depois de
+   * uma decada de titulos e uma coisa; ficar sem contrato aos 29 e outra.
+   */
+  retiredFree: boolean
   /**
    * A competicao continental que o clube conquistou na temporada anterior, ou
    * `null` quando nao conquistou nenhuma. A vaga vale para o ano seguinte,
@@ -212,6 +239,15 @@ export type CareerState = {
   continentalId: string | null
   /** Destinos pedidos ao empresario. Vazio = procura em qualquer lugar. */
   preferences: TransferPreferences
+  /**
+   * A liga onde o jogador decidiu encerrar a carreira, escolhida com o
+   * empresario a partir de `FAREWELL_AGE`. `null` enquanto ele nao escolheu.
+   *
+   * Enquanto estiver definida, ela substitui `preferences` na busca e garante
+   * pelo menos uma proposta de la por temporada. Pode ser trocada a qualquer
+   * momento — vale da proxima janela em diante, como todo pedido.
+   */
+  farewellLeagueId: string | null
   /**
    * O lado humano da carreira. Existe nos dois modos — no classico ela so se
    * move ao fim de cada temporada; no Jogo a Jogo, a cada partida.
@@ -224,6 +260,18 @@ export function startCareer(config: CareerConfig): CareerState {
   const club = pickStartingClub(config, rng)
   const league = leagueOf(club)
 
+  // O primeiro contrato e sempre de quatro anos: e o contrato de formacao que
+  // todo clube assina com quem sobe da base. Salario de quem ainda nao provou
+  // nada — o motor nao tem desempenho para olhar, e `fairSalary` sabe disso.
+  const salary = fairSalary({
+    overall: currentOverall(config.peakAttrs, config.position, START_AGE),
+    potential: overallFor(config.peakAttrs, config.position),
+    age: START_AGE,
+    reputation: 0,
+    club,
+    form: null,
+  })
+
   return {
     config,
     peakAttrs: config.peakAttrs,
@@ -235,8 +283,18 @@ export function startCareer(config: CareerConfig): CareerState {
     retiresAt: retirementAge(config.peakAttrs, rng),
     retired: false,
     offers: [],
+    contract: {
+      clubId: club.id,
+      salary,
+      years: START_CONTRACT_YEARS,
+      seasonsLeft: START_CONTRACT_YEARS,
+    },
+    renewal: null,
+    earnings: 0,
+    retiredFree: false,
     continentalId: continentalSpotOfClub(club, league.id),
     preferences: [],
+    farewellLeagueId: null,
     morale: STARTING_MORALE,
   }
 }
@@ -247,6 +305,17 @@ export function setPreferences(
   preferences: TransferPreferences,
 ): CareerState {
   return { ...state, preferences }
+}
+
+/**
+ * Escolhe (ou desfaz, com `null`) a liga onde o jogador quer encerrar a
+ * carreira. Vale da proxima janela em diante.
+ */
+export function setFarewellLeague(
+  state: CareerState,
+  farewellLeagueId: string | null,
+): CareerState {
+  return { ...state, farewellLeagueId }
 }
 
 /**
@@ -462,6 +531,7 @@ export function playSeason(
     growth: growthBetween(state.peakAttrs, peakAttrs),
     clubLift: leagueLift,
     marketValue: marketValue(overall, state.age),
+    salary: state.contract.salary,
     cups,
     national,
     decisive,
@@ -471,6 +541,28 @@ export function playSeason(
   const age = state.age + 1
   const nextOverall = currentOverall(peakAttrs, state.config.position, age)
 
+  // O contrato consome a temporada que acabou de ser jogada, e o salario dela
+  // entra nos ganhos da carreira.
+  const contract: Contract = {
+    ...state.contract,
+    seasonsLeft: Math.max(0, state.contract.seasonsLeft - 1),
+  }
+
+  const reputation = reputationOf(state) + morale.reputation / 8
+  const contractInput: ContractInput = {
+    overall: nextOverall,
+    potential: overallFor(peakAttrs, state.config.position),
+    age,
+    reputation,
+    club,
+    form: { matches: stats.matches, rating: stats.rating },
+  }
+
+  // A renovacao e decidida antes do mercado porque muda o mercado: sem ela e
+  // com o contrato vencendo, o jogador precisa de alguma porta aberta.
+  const renewal = renewalOffer(contract, contractInput, rng)
+  const needsClub = contract.seasonsLeft <= 0 && renewal === null
+
   return {
     state: {
       ...state,
@@ -479,6 +571,9 @@ export function playSeason(
       seasonIndex: state.seasonIndex + 1,
       seasons: [...state.seasons, record],
       retired: age > state.retiresAt,
+      contract,
+      earnings: round2(state.earnings + state.contract.salary),
+      renewal: renewal,
       // Ferias e pre-temporada desfazem parte do que ficou — para os dois
       // lados. Sem isso um comeco ruim aos 17 marcaria a carreira inteira.
       morale: driftBetweenSeasons(morale),
@@ -493,12 +588,14 @@ export function playSeason(
           club,
           stats,
           progress: nextOverall - overall,
-          reputation: reputationOf(state) + morale.reputation / 8,
+          reputation,
           promoted,
           relegated,
           seasonsAtClub: seasonsAtClub(state, club.id),
         },
         state.preferences,
+        state.farewellLeagueId,
+        needsClub,
         rng,
       ),
       continentalId: earnedContinentalSpot(
@@ -591,13 +688,134 @@ function growthBetween(before: PlayerAttrs, after: PlayerAttrs): AttrGrowth[] {
   }))
 }
 
-/** Aceita uma proposta. Passar `null` significa ficar onde esta. */
+/**
+ * A renovacao que o clube coloca na mesa.
+ *
+ * So aparece no ultimo ano de contrato — antes disso nao ha o que renovar — e
+ * so quando o clube ainda quer o jogador. Com `seasonsLeft` em 1 ela e um
+ * bonus: da para recusar e seguir mais um ano. Com `seasonsLeft` em 0 ela e a
+ * unica porta para ficar.
+ */
+function renewalOffer(
+  contract: Contract,
+  input: ContractInput,
+  rng: Rng,
+): ContractTerms | null {
+  if (contract.seasonsLeft > 1) return null
+  if (!wantsToRenew(input)) return null
+
+  return {
+    salary: round2(fairSalary(input) * (0.9 + rng() * 0.18)),
+    years: desiredYears(input.age),
+  }
+}
+
+/**
+ * O jogador como um clube o enxerga hoje.
+ *
+ * E a entrada de tudo que envolve dinheiro: salario justo, teto de negociacao
+ * e vontade do clube de renovar. Fica aqui, e nao na tela, porque depende de
+ * coisas que so a carreira sabe — reputacao acumulada e a temporada passada.
+ */
+export function contractInputAt(state: CareerState, club: Club): ContractInput {
+  const last = state.seasons[state.seasons.length - 1]
+
+  return {
+    overall: currentOverall(state.peakAttrs, state.config.position, state.age),
+    potential: overallFor(state.peakAttrs, state.config.position),
+    age: state.age,
+    reputation: reputationOf(state) + state.morale.reputation / 8,
+    club,
+    form: last ? { matches: last.stats.matches, rating: last.stats.rating } : null,
+  }
+}
+
+/** Registra o que foi acertado numa negociacao bem-sucedida. */
+export function updateOfferTerms(
+  state: CareerState,
+  clubId: string,
+  terms: ContractTerms,
+): CareerState {
+  return {
+    ...state,
+    offers: state.offers.map((offer) =>
+      offer.clubId === clubId ? { ...offer, terms } : offer,
+    ),
+  }
+}
+
+/** O clube levantou da mesa: a proposta sai do mercado desta janela. */
+export function dropOffer(state: CareerState, clubId: string): CareerState {
+  return { ...state, offers: state.offers.filter((offer) => offer.clubId !== clubId) }
+}
+
+/**
+ * Assina com um clube que fez proposta.
+ *
+ * Os termos vem de fora porque podem ter sido negociados: o que o clube ofertou
+ * e o que ficou acertado nao sao necessariamente a mesma coisa.
+ */
+export function signOffer(
+  state: CareerState,
+  clubId: string,
+  terms: ContractTerms,
+): CareerState {
+  const signed = resolveTransfer(state, clubId)
+
+  return {
+    ...signed,
+    contract: { clubId, salary: terms.salary, years: terms.years, seasonsLeft: terms.years },
+  }
+}
+
+/** Renova com o clube atual nos termos acertados. */
+export function renewContract(state: CareerState, terms: ContractTerms): CareerState {
+  return {
+    ...state,
+    offers: [],
+    renewal: null,
+    contract: {
+      clubId: state.clubId,
+      salary: terms.salary,
+      years: terms.years,
+      seasonsLeft: terms.years,
+    },
+  }
+}
+
+/**
+ * Fecha a janela sem assinar nada.
+ *
+ * Com contrato em vigor, e so recusar o mercado. Sem contrato, e o fim da
+ * carreira: nao existe temporada seguinte para quem nao tem clube, e inventar
+ * um contrato de consolacao esvaziaria a decisao de recusar.
+ */
+export function closeMarket(state: CareerState): CareerState {
+  const expired = state.contract.seasonsLeft <= 0
+
+  return {
+    ...state,
+    offers: [],
+    renewal: null,
+    retired: state.retired || expired,
+    retiredFree: state.retiredFree || expired,
+  }
+}
+
+/**
+ * Aceita uma proposta pelos termos que o clube ofereceu. Passar `null`
+ * significa ficar onde esta.
+ *
+ * E a porta curta: quem negociou usa `signOffer` com os termos acertados.
+ */
 export function resolveTransfer(state: CareerState, clubId: string | null): CareerState {
   if (clubId === null) {
-    return { ...state, offers: [] }
+    return closeMarket(state)
   }
 
-  if (!state.offers.some((offer) => offer.clubId === clubId)) {
+  const offer = state.offers.find((item) => item.clubId === clubId)
+
+  if (!offer) {
     throw new Error(`resolveTransfer: proposta inexistente para ${clubId}`)
   }
 
@@ -616,7 +834,19 @@ export function resolveTransfer(state: CareerState, clubId: string | null): Care
     leagueId: league.id,
     continentalId: continentalSpotOfClub(target, league.id),
     offers: [],
+    renewal: null,
+    contract: {
+      clubId,
+      salary: offer.terms.salary,
+      years: offer.terms.years,
+      seasonsLeft: offer.terms.years,
+    },
   }
+}
+
+/** Duas casas — a precisao com que salario e ganhos aparecem na tela. */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 /**

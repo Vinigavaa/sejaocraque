@@ -2,7 +2,8 @@
 
 import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
-import { destinationGroups, MAX_PREFERENCES } from '@/lib/sim/transfers'
+import { leagueById } from '@/lib/sim/data/leagues'
+import { destinationGroups, FAREWELL_AGE, MAX_PREFERENCES } from '@/lib/sim/transfers'
 
 import { LeagueCrest } from '../Crest'
 import { ScreenLayout } from '../ScreenLayout'
@@ -25,6 +26,10 @@ export function Agent({ game }: { game: Game }) {
   const preferences = career.preferences
   const full = preferences.length >= MAX_PREFERENCES
   const club = clubById(career.clubId)
+
+  // No fim da carreira o pedido deixa de ser uma lista de desejos e vira uma
+  // decisao unica: onde pendurar as chuteiras.
+  if (career.age >= FAREWELL_AGE) return <Farewell game={game} />
 
   const toggle = (id: string) => {
     if (preferences.includes(id)) {
@@ -125,6 +130,118 @@ export function Agent({ game }: { game: Game }) {
               </div>
             )
           })}
+        </div>
+
+        <GhostButton onClick={game.closeAgent}>VOLTAR</GhostButton>
+      </div>
+    </ScreenLayout>
+  )
+}
+
+/**
+ * A escolha da liga onde a carreira termina, dos {FAREWELL_AGE} anos em diante.
+ *
+ * Diferente do pedido de destinos, aqui e uma liga so — e o empresario passa a
+ * trabalhar aquele mercado especificamente, trazendo pelo menos uma proposta de
+ * la por temporada enquanto o jogador tiver nivel para algum clube da liga.
+ *
+ * Trocar de ideia e permitido a qualquer momento: a nova liga vale da proxima
+ * janela em diante, como todo pedido.
+ */
+function Farewell({ game }: { game: Game }) {
+  const career = game.career
+  if (!career) return null
+
+  const chosen = career.farewellLeagueId
+  const chosenLeague = chosen ? leagueById(chosen) : undefined
+  const club = clubById(career.clubId)
+
+  return (
+    <ScreenLayout mobileOrder={['center']}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(16) }}>
+        <div>
+          <SectionLabel>SEU EMPRESÁRIO</SectionLabel>
+          <Display size={24} style={{ marginTop: scaled(4) }}>
+            ONDE VOCÊ QUER TERMINAR?
+          </Display>
+          <div
+            style={{
+              marginTop: scaled(8),
+              fontSize: scaled(12),
+              color: t.muted,
+              lineHeight: 1.5,
+            }}
+          >
+            Escolha uma liga e seu empresário trabalha só aquele mercado. A cada
+            temporada ele traz pelo menos uma proposta de lá, enquanto você tiver
+            nível para algum clube da liga.
+          </div>
+          {!!club && (
+            <div style={{ marginTop: scaled(6), fontSize: scaled(11), color: t.faintText }}>
+              {career.age} anos, hoje no {club.name}. O pedido vale para a próxima
+              janela.
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            fontSize: scaled(11),
+            fontWeight: 800,
+            color: chosenLeague ? t.goldText : t.mutedStrong,
+          }}
+        >
+          {chosenLeague
+            ? `Destino: ${chosenLeague.name} · toque de novo para desfazer`
+            : 'Nenhuma liga escolhida — o empresário ouve o mundo inteiro'}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(10) }}>
+          {destinationGroups().map((group) => (
+            <div
+              key={group.country}
+              style={{
+                border: `1px solid ${t.lineSoft}`,
+                borderRadius: 6,
+                background: t.card,
+                padding: scaled(10),
+              }}
+            >
+              <div
+                style={{
+                  fontSize: scaled(12),
+                  fontWeight: 800,
+                  color: t.mutedStrong,
+                }}
+              >
+                {group.flag} {group.label}
+              </div>
+
+              <div
+                style={{
+                  marginTop: scaled(8),
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: scaled(6),
+                }}
+              >
+                {group.leagues.map((league) => {
+                  const on = chosen === league.id
+
+                  return (
+                    <Choice
+                      key={league.id}
+                      label={league.name}
+                      crest={league.id}
+                      selected={on}
+                      disabled={false}
+                      onClick={() => game.chooseFarewellLeague(on ? null : league.id)}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
 
         <GhostButton onClick={game.closeAgent}>VOLTAR</GhostButton>

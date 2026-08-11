@@ -1,6 +1,7 @@
 import { CLUBS, leagueOf } from './data/clubs'
 import { COUNTRY_LABEL, LEAGUES } from './data/leagues'
-import { range, sample, type Rng } from './rng'
+import { desiredYears, fairSalary, type ContractTerms } from './contracts'
+import { sample, type Rng } from './rng'
 import type { PlayerSeasonStats } from './season'
 import type { Club } from './types'
 
@@ -36,6 +37,14 @@ export const SETTLING_SEASONS = 2
 
 export type TransferOffer = {
   clubId: string
+  /**
+   * O que o clube poe na mesa: salario por temporada e duracao.
+   *
+   * Vem pronto do motor, e nao calculado na tela, porque a proposta precisa
+   * ser a mesma toda vez que o jogador olhar para ela — inclusive depois de
+   * uma negociacao fracassada.
+   */
+  terms: ContractTerms
 }
 
 /**
@@ -48,6 +57,24 @@ export type TransferOffer = {
 export type TransferPreferences = string[]
 
 export const MAX_PREFERENCES = 3
+
+/**
+ * Idade a partir da qual o empresario pergunta onde o jogador quer encerrar a
+ * carreira.
+ *
+ * Antes disso a carreira ainda esta sendo construida e o mercado decide sozinho
+ * para onde ela vai. Dos 31 em diante a escolha passa a ser do jogador: ele diz
+ * a liga e o empresario trabalha aquele mercado especificamente.
+ */
+export const FAREWELL_AGE = 31
+
+/**
+ * Quanto abaixo do proprio nivel o jogador aceita na liga escolhida.
+ *
+ * E mais folgado do que o mercado normal de propostas: quem escolheu terminar
+ * a carreira em um pais especifico aceita um clube menor de la.
+ */
+const FAREWELL_FLOOR = 12
 
 /** Se o clube atende a um dos destinos pedidos. */
 export function matchesPreference(club: Club, preferences: TransferPreferences): boolean {
@@ -125,6 +152,111 @@ export function marketInterest(input: MarketInput): number {
 export function buildOffers(
   input: MarketInput,
   preferences: TransferPreferences,
+  farewellLeagueId: string | null,
+  needsClub: boolean,
+  rng: Rng,
+): TransferOffer[] {
+  const farewell = farewellOffer(input, farewellLeagueId, rng)
+
+  // Escolher a liga de despedida redireciona tudo: nao faz sentido o
+  // empresario continuar sondando destinos pedidos anos atras.
+  const effective = farewellLeagueId && input.age >= FAREWELL_AGE
+    ? [farewellLeagueId]
+    : preferences
+
+  const market = marketOffers(input, effective, rng).filter(
+    (offer) => offer.clubId !== farewell?.clubId,
+  )
+
+  const offers = farewell ? [farewell, ...market].slice(0, 2) : market
+
+  // Sem contrato e sem nada na mesa, o mercado que resta e o de baixo. Ele
+  // aparece porque o jogador precisa de uma escolha real antes de a carreira
+  // acabar — mesmo que a escolha seja descer de nivel.
+  if (offers.length === 0 && needsClub) return survivalOffers(input, effective, rng)
+
+  return offers
+}
+
+/**
+ * O ultimo mercado: clubes do nivel do jogador para baixo.
+ *
+ * Nao passa pelo sorteio de interesse nem pela janela de acomodacao — quem
+ * esta livre no mercado nao depende de alguem se interessar por ele, e sim de
+ * existir algum clube em que ele ainda caiba. Quando nao existe, a carreira
+ * acaba, e e assim que deve ser.
+ */
+function survivalOffers(
+  input: MarketInput,
+  preferences: TransferPreferences,
+  rng: Rng,
+): TransferOffer[] {
+  const targets = CLUBS.filter(
+    (club) =>
+      club.id !== input.club.id &&
+      club.strength <= input.overall + 2 &&
+      club.strength >= input.overall - 14,
+  )
+
+  if (targets.length === 0) return []
+
+  // O destino pedido continua valendo enquanto houver alguem la. So quando
+  // nao ha e que o empresario aceita qualquer porta aberta.
+  const preferred = targets.filter((club) => matchesPreference(club, preferences))
+
+  return pickOffers(input, rng, preferred.length > 0 ? preferred : targets, 2)
+}
+
+/**
+ * A proposta garantida da liga escolhida para o fim da carreira.
+ *
+ * Enquanto o jogador tiver nivel para algum clube de la, ele recebe pelo menos
+ * um convite por temporada — e a promessa que o empresario fez ao aceitar o
+ * pedido. Quando nenhum clube da liga cabe no momento dele, nao ha proposta:
+ * a garantia e de esforco, nao de vaga.
+ *
+ * Ela ignora de proposito a janela de acomodacao do mercado normal. O jogador
+ * pediu para ir embora para um lugar especifico e o ano de carreira que resta
+ * nao permite esperar duas temporadas.
+ */
+function farewellOffer(
+  input: MarketInput,
+  farewellLeagueId: string | null,
+  rng: Rng,
+): TransferOffer | null {
+  if (!farewellLeagueId || input.age < FAREWELL_AGE) return null
+
+  const targets = farewellCandidates(input, farewellLeagueId)
+  if (targets.length === 0) return null
+
+  return pickOffers(input, rng, targets, 1)[0] ?? null
+}
+
+/**
+ * Clubes da liga escolhida compativeis com o momento do jogador.
+ *
+ * O teto e curto: veterano de 33 anos nao e sondado pelo campeao continental
+ * so porque pediu aquela liga. O piso e generoso, porque descer de nivel para
+ * fechar a carreira onde se quer e uma escolha comum.
+ */
+export function farewellCandidates(input: MarketInput, leagueId: string): Club[] {
+  const interest = marketInterest(input)
+  const ceiling = input.overall + Math.round(2 + interest * 5)
+  const floor = input.overall - FAREWELL_FLOOR
+
+  return CLUBS.filter(
+    (club) =>
+      club.id !== input.club.id &&
+      club.leagueId === leagueId &&
+      club.strength >= floor &&
+      club.strength <= ceiling,
+  )
+}
+
+/** O mercado espontaneo — o que existia antes da liga de despedida. */
+function marketOffers(
+  input: MarketInput,
+  preferences: TransferPreferences,
   rng: Rng,
 ): TransferOffer[] {
   // Recem-chegado nao e sondado. A unica excecao e quem foi rebaixado junto
@@ -142,17 +274,18 @@ export function buildOffers(
   const preferred = targets.filter((club) => matchesPreference(club, preferences))
   const hasPreferences = preferences.length > 0
 
-  // Duas propostas so para quem o mercado disputa de verdade.
-  const count = interest > 0.6 ? range(rng, 1, 2) : 1
+  // Duas propostas por janela: uma escolha so nao e escolha, e comparar duas
+  // realidades diferentes e o que torna a decisao interessante.
+  const count = 2
 
-  if (preferred.length > 0) return pickOffers(rng, preferred, count)
-  if (!hasPreferences) return pickOffers(rng, targets, count)
+  if (preferred.length > 0) return pickOffers(input, rng, preferred, count)
+  if (!hasPreferences) return pickOffers(input, rng, targets, count)
 
   // Pediu destino e o empresario nao achou nada la. Ele ainda leva uma
   // sondagem de fora, mas so uma, e so quando o interesse e alto o bastante
   // para justificar contrariar o pedido.
   if (interest < 0.45) return []
-  return pickOffers(rng, targets, 1)
+  return pickOffers(input, rng, targets, 1)
 }
 
 /**
@@ -189,8 +322,44 @@ function candidates(input: MarketInput, interest: number): Club[] {
   )
 }
 
-function pickOffers(rng: Rng, clubs: Club[], count: number): TransferOffer[] {
-  return sample(rng, clubs, count).map((club) => ({ clubId: club.id }))
+function pickOffers(
+  input: MarketInput,
+  rng: Rng,
+  clubs: Club[],
+  count: number,
+): TransferOffer[] {
+  return sample(rng, clubs, count).map((club) => ({
+    clubId: club.id,
+    terms: openingTerms(input, club, rng),
+  }))
+}
+
+/**
+ * A proposta de saida do clube.
+ *
+ * Sai do salario justo com um desvio pequeno para os dois lados: o mesmo
+ * jogador nao vale exatamente a mesma coisa para dois diretores diferentes, e
+ * uma oferta um pouco abaixo do justo e o que da sentido a negociar.
+ */
+function openingTerms(input: MarketInput, club: Club, rng: Rng): ContractTerms {
+  const salary = fairSalary(contractInputFor(input, club)) * (0.9 + rng() * 0.18)
+
+  return {
+    salary: Math.round(salary * 100) / 100,
+    years: desiredYears(input.age),
+  }
+}
+
+/** O jogador como o clube de destino o enxerga. */
+export function contractInputFor(input: MarketInput, club: Club) {
+  return {
+    overall: input.overall,
+    potential: input.potential,
+    age: input.age,
+    reputation: input.reputation,
+    club,
+    form: { matches: input.stats.matches, rating: input.stats.rating },
+  }
 }
 
 function clampUnit(value: number): number {

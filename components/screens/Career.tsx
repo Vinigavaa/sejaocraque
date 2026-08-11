@@ -2,6 +2,7 @@ import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
 import { leagueById } from '@/lib/sim/data/leagues'
 import { seasonLabel } from '@/lib/sim/career'
+import { formatSalary } from '@/lib/sim/contracts'
 import {
   MORALE_LABEL,
   moraleLabel,
@@ -56,6 +57,7 @@ export function Career({ game }: { game: Game }) {
       : null
 
   const shown = running ?? record?.stats ?? null
+  const lastYear = career.contract.seasonsLeft <= 1
 
   return (
     <ScreenLayout
@@ -261,12 +263,23 @@ export function Career({ game }: { game: Game }) {
           </button>
           {/* No Jogo a Jogo o jogador precisa saber onde está no calendário
               antes de decidir se joga mais uma rodada agora. */}
+          {jogoAJogo && <NextMatch game={game} />}
           {jogoAJogo && (
-            <div style={{ fontSize: scaled(10), color: t.faintText, textAlign: 'center' }}>
-              {game.matchday
-                ? `Rodada ${game.matchday.roundIndex + 1} de ${game.matchday.rounds.length}`
-                : 'A temporada começa no próximo jogo'}
-            </div>
+            <button
+              onClick={game.skipSeason}
+              style={{
+                background: 'transparent',
+                border: `1px solid ${t.gold}`,
+                color: t.goldText,
+                borderRadius: 6,
+                padding: scaled(10),
+                fontWeight: 700,
+                fontSize: scaled(12),
+                cursor: 'pointer',
+              }}
+            >
+              PULAR PARA O FIM DA TEMPORADA
+            </button>
           )}
           <button
             onClick={game.openAgent}
@@ -405,6 +418,34 @@ export function Career({ game }: { game: Game }) {
         )}
 
         <section>
+          <SectionLabel>Contrato</SectionLabel>
+          <div
+            style={{
+              marginTop: scaled(8),
+              border: `1px solid ${lastYear ? t.gold : t.lineSoft}`,
+              borderRadius: 6,
+              background: t.card,
+              padding: `${scaled(10)} ${scaled(12)}`,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: scaled(8),
+            }}
+          >
+            <Stat value={formatSalary(career.contract.salary)} label="por temporada" size={18} />
+            <Stat value={career.contract.seasonsLeft} label="temporadas restantes" size={18} />
+            <Stat value={formatSalary(career.earnings)} label="já recebido" size={18} />
+          </div>
+          {/* O último ano é a única informação daqui que muda uma decisão: é
+              quando a renovação aparece na janela — ou não aparece. */}
+          {lastYear && (
+            <div style={{ marginTop: scaled(6), fontSize: scaled(11), color: t.goldText }}>
+              Último ano de contrato. Na próxima janela o {clubById(career.clubId)?.name} decide
+              se propõe renovação.
+            </div>
+          )}
+        </section>
+
+        <section>
           <SectionLabel>Como você está sendo visto</SectionLabel>
           <div
             style={{
@@ -467,6 +508,69 @@ export function Career({ game }: { game: Game }) {
         <TrainingPicker game={game} />
       </div>
     </ScreenLayout>
+  )
+}
+
+/**
+ * O próximo compromisso do jogador.
+ *
+ * Adversário, competição, rodada e mando ficam à vista antes de ele decidir
+ * jogar: sem isso o botão de "próximo jogo" é um salto no escuro, e voltar de
+ * uma partida não dizia nada sobre a seguinte.
+ */
+function NextMatch({ game }: { game: Game }) {
+  const next = game.nextMatch
+
+  if (!next) {
+    return (
+      <div style={{ fontSize: scaled(10), color: t.faintText, textAlign: 'center' }}>
+        Temporada encerrada — o próximo jogo abre o fim de temporada.
+      </div>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${t.lineSoft}`,
+        borderRadius: 6,
+        background: t.card,
+        padding: `${scaled(8)} ${scaled(10)}`,
+      }}
+    >
+      <div
+        style={{
+          fontSize: scaled(9),
+          color: t.faintText,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+        }}
+      >
+        Próximo jogo
+      </div>
+      <div
+        style={{
+          marginTop: scaled(4),
+          display: 'flex',
+          alignItems: 'center',
+          gap: scaled(8),
+        }}
+      >
+        <ClubCrest clubId={next.opponentId} size={20} />
+        <div style={{ fontSize: scaled(13), fontWeight: 800, minWidth: 0 }}>
+          {next.opponentName}
+        </div>
+        <Badge
+          bg={next.atHome ? t.greenSoft : t.accentSoft}
+          color={next.atHome ? t.greenText : t.text}
+        >
+          {next.atHome ? 'Em casa' : 'Fora'}
+        </Badge>
+      </div>
+      <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.mutedStrong }}>
+        {next.competition} · {next.round}ª rodada de {next.totalRounds} · {next.season}
+      </div>
+    </div>
   )
 }
 

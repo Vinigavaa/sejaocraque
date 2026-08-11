@@ -1,11 +1,7 @@
 import type { Game, Overlay } from '@/lib/game/useGame'
 import type { SeasonRecord } from '@/lib/sim/career'
 import { AWARD_LABEL, type Award } from '@/lib/sim/awards'
-import { clubById } from '@/lib/sim/data/clubs'
-import { leagueById } from '@/lib/sim/data/leagues'
-import { matchesPreference } from '@/lib/sim/transfers'
 
-import { ClubCrest } from './Crest'
 import { Display, GhostButton, scaled, SectionLabel, t } from './shared'
 
 export function Overlays({ game }: { game: Game }) {
@@ -44,7 +40,6 @@ export function Overlays({ game }: { game: Game }) {
         }}
       >
         {overlay.type === 'award' && <Award game={game} award={overlay.award} />}
-        {overlay.type === 'transfer' && <Transfer game={game} clubId={overlay.clubId} />}
       </div>
     </div>
   )
@@ -284,77 +279,5 @@ function overlayKey(overlay: Overlay): string {
   switch (overlay.type) {
     case 'award':
       return `award-${overlay.award}`
-    case 'transfer':
-      return `transfer-${overlay.clubId}`
   }
-}
-
-function Transfer({ game, clubId }: { game: Game; clubId: string }) {
-  const club = clubById(clubId)
-  const league = club ? leagueById(club.leagueId) : undefined
-  const current = game.career ? clubById(game.career.clubId) : undefined
-
-  // O jogador precisa saber se vai ser titular ou reserva antes de decidir.
-  const risky = !!club && game.liveOverall < club.strength - 6
-
-  // Fecha o ciclo do pedido feito ao empresario: quando a proposta vem de um
-  // destino escolhido, o jogador precisa ver que foi por isso.
-  const preferences = game.career?.preferences ?? []
-  const asked = !!club && preferences.length > 0 && matchesPreference(club, preferences)
-
-  return (
-    <>
-      <SectionLabel style={{ textAlign: 'center', fontWeight: 800, color: t.muted }}>
-        PROPOSTA
-      </SectionLabel>
-      <ClubCrest clubId={club?.id} size={56} style={{ margin: `${scaled(10)} auto 0` }} />
-      <Display size={24} style={{ marginTop: scaled(6), textAlign: 'center' }}>
-        {club?.name}
-      </Display>
-      <div style={{ marginTop: scaled(6), fontSize: scaled(12), color: t.muted, textAlign: 'center' }}>
-        {league?.name}
-      </div>
-      {asked && (
-        <div
-          style={{
-            marginTop: scaled(6),
-            fontSize: scaled(10),
-            fontWeight: 800,
-            color: t.goldText,
-            textAlign: 'center',
-          }}
-        >
-          ★ DESTINO QUE VOCÊ PEDIU
-        </div>
-      )}
-      <div
-        style={{
-          marginTop: scaled(10),
-          fontSize: scaled(11),
-          color: risky ? t.dangerText : t.greenText,
-          textAlign: 'center',
-          lineHeight: 1.4,
-        }}
-      >
-        {risky
-          ? 'Elenco acima do seu nível — você pode ficar no banco.'
-          : 'Você deve ser titular nesse elenco.'}
-      </div>
-      <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.faintText, textAlign: 'center' }}>
-        Hoje no {current?.name}
-      </div>
-
-      <div
-        style={{ marginTop: scaled(16), display: 'grid', gridTemplateColumns: '1fr 1fr', gap: scaled(8) }}
-      >
-        <GhostButton onClick={game.declineTransfer}>FICAR</GhostButton>
-        <GhostButton
-          onClick={game.acceptTransfer}
-          style={{ background: t.accent, border: 'none', color: 'white' }}
-        >
-          ACEITAR
-        </GhostButton>
-      </div>
-    </>
-  )
 }

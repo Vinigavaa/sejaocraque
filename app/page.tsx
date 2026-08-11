@@ -12,6 +12,7 @@ import { End } from '@/components/screens/End'
 import { History } from '@/components/screens/History'
 import { Home } from '@/components/screens/Home'
 import { Live } from '@/components/screens/Live'
+import { Market } from '@/components/screens/Market'
 import { LiveMatch } from '@/components/screens/LiveMatch'
 import { Reveal } from '@/components/screens/Reveal'
 import { SeasonReview } from '@/components/screens/SeasonReview'
@@ -37,6 +38,7 @@ export default function Page() {
           {game.screen === 'end' && <End game={game} />}
           {game.screen === 'history' && <History game={game} />}
           {game.screen === 'agent' && <Agent game={game} />}
+          {game.screen === 'market' && <Market game={game} />}
         </ScreenTransition>
       </DesktopShell>
 

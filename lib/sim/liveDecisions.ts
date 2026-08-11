@@ -1,3 +1,6 @@
+import type { DecisionSide, MatchFocus } from './liveFocus'
+import { focusWeight } from './liveFocus'
+import type { TimingKind } from './liveTiming'
 import type { MoraleDelta } from './morale'
 import type { NumericAttr, Position } from './types'
 
@@ -58,6 +61,15 @@ export type DecisionSpec = {
   positions?: readonly Position[]
   phase: 'inicio' | 'fim' | 'qualquer'
   when?: DecisionCondition
+  /**
+   * De que lado do campo o momento acontece. E o que o foco tatico enxerga:
+   * quem joga em Defesa ve mais `defesa`, quem joga em Ataque ve mais `ataque`.
+   *
+   * Declarado, e nao derivado dos efeitos como `isProductive`: um lance de
+   * marcacao que termina em contra-ataque produz gol, e mesmo assim aconteceu
+   * na defesa. Nao existe nos efeitos nada que diga isso.
+   */
+  side: DecisionSide
   weight: number
   options: DecisionOption[]
 }
@@ -69,6 +81,7 @@ const DEFENSE: readonly Position[] = ['ZAG', 'ALA', 'VOL']
 export const DECISIONS: readonly DecisionSpec[] = [
   {
     id: 'frente-goleiro',
+    side: 'ataque',
     prompt: '{jogador} recebe nas costas da zaga e fica de frente para o goleiro.',
     positions: ATTACK,
     phase: 'qualquer',
@@ -129,6 +142,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'chute-de-fora',
+    side: 'ataque',
     prompt: 'A defesa do {adversario} fecha o meio e a bola sobra para {jogador} na entrada da área.',
     phase: 'qualquer',
     weight: 9,
@@ -170,6 +184,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'penalti',
+    side: 'ataque',
     prompt: 'Pênalti para o {time}. O árbitro aponta a marca e o estádio se cala.',
     phase: 'qualquer',
     weight: 5,
@@ -210,6 +225,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'entrada-dura',
+    side: 'defesa',
     prompt: 'O camisa 10 do {adversario} passa por {jogador} e o contra-ataque está armado.',
     positions: DEFENSE,
     phase: 'qualquer',
@@ -255,6 +271,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'bola-dividida',
+    side: 'neutro',
     prompt: 'Bola dividida no meio-campo, e o volante do {adversario} vem com tudo.',
     positions: MIDFIELD,
     phase: 'qualquer',
@@ -299,6 +316,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'lesao-sentida',
+    side: 'neutro',
     prompt: '{jogador} sente a parte de trás da coxa depois de um pique. O médico pergunta se dá para seguir.',
     phase: 'fim',
     weight: 5,
@@ -337,6 +355,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'ordem-do-treinador',
+    side: 'neutro',
     prompt: 'O treinador chama {jogador} na beira do campo: é para recuar e segurar o resultado.',
     phase: 'fim',
     when: 'ganhando',
@@ -380,6 +399,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'pressao-da-torcida',
+    side: 'neutro',
     prompt: 'A torcida do {time} vaia depois de mais um passe errado. A bola vem para {jogador} outra vez.',
     phase: 'qualquer',
     weight: 7,
@@ -420,6 +440,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'ultimo-lance',
+    side: 'ataque',
     prompt: 'Último minuto, {time} precisa do gol. Escanteio na área.',
     phase: 'fim',
     when: 'perdendo',
@@ -462,6 +483,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'falta-perigosa',
+    side: 'ataque',
     prompt: 'Falta na entrada da área do {adversario}. {jogador} olha para a barreira.',
     phase: 'qualquer',
     weight: 6,
@@ -503,6 +525,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'discussao-companheiro',
+    side: 'neutro',
     prompt: 'O camisa 9 do {time} reclama alto que {jogador} não passou a bola.',
     phase: 'qualquer',
     weight: 6,
@@ -543,6 +566,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'saida-de-bola',
+    side: 'defesa',
     prompt: 'O {adversario} pressiona a saída de bola e {jogador} recebe de costas, marcado.',
     positions: DEFENSE,
     phase: 'inicio',
@@ -584,6 +608,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'contra-ataque',
+    side: 'ataque',
     prompt: '{jogador} pega a bola no meio com espaço e dois companheiros correndo.',
     phase: 'qualquer',
     weight: 8,
@@ -625,6 +650,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'provocacao',
+    side: 'neutro',
     prompt: 'O zagueiro do {adversario} provoca {jogador} depois de um lance dividido.',
     phase: 'qualquer',
     weight: 5,
@@ -666,6 +692,7 @@ export const DECISIONS: readonly DecisionSpec[] = [
   },
   {
     id: 'substituicao-cedo',
+    side: 'neutro',
     prompt: 'O quarto árbitro levanta a placa: é o número de {jogador}, e ainda falta meia hora.',
     phase: 'fim',
     when: 'perdendo',
@@ -698,6 +725,140 @@ export const DECISIONS: readonly DecisionSpec[] = [
       },
     ],
   },
+  /* ---------------------------------------------------------------------
+   * Momentos defensivos sem restricao de posicao.
+   *
+   * Existem porque o foco em Defesa precisa ter o que oferecer a **qualquer**
+   * jogador: os dois momentos defensivos anteriores sao de zagueiro, e um
+   * atacante que escolhesse Defesa perdia as oportunidades ofensivas sem
+   * ganhar nada em troca. Marcar na frente e correr para trás é o que um
+   * atacante faz quando o time se fecha.
+   * ------------------------------------------------------------------ */
+  {
+    id: 'pressao-alta',
+    side: 'defesa',
+    prompt: 'O zagueiro do {adversario} domina de costas para o gol, e {jogador} está perto.',
+    phase: 'qualquer',
+    weight: 8,
+    options: [
+      {
+        label: 'Pressionar a saída',
+        detail: 'Roubar ali é meio gol. Se passar, o time fica exposto.',
+        attr: 'vel',
+        base: 0.4,
+        success: {
+          goals: 1,
+          rating: 0.6,
+          morale: { confidence: 8, coach: 6, reputation: 0.4 },
+          text: 'GOL! {jogador} rouba na saída de bola e define na frente do goleiro.',
+        },
+        failure: {
+          rating: -0.35,
+          morale: { coach: -4, confidence: -4 },
+          text: '{jogador} vai à pressão, é driblado e abre o campo para o {adversario}.',
+        },
+      },
+      {
+        label: 'Segurar a linha',
+        detail: 'Fecha o passe e espera o time subir junto.',
+        attr: 'def',
+        base: 0.66,
+        success: {
+          rating: 0.25,
+          morale: { coach: 6, squad: 3 },
+          text: '{jogador} fecha o passe, o time sobe junto e o {adversario} volta para trás.',
+        },
+        failure: {
+          rating: -0.15,
+          morale: { coach: -2 },
+          text: '{jogador} espera, o {adversario} inverte o jogo e a pressão passa.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'cobertura-area',
+    side: 'defesa',
+    prompt: 'Cruzamento na área do {time} e sobra um atacante sem marcação nas costas de {jogador}.',
+    phase: 'qualquer',
+    weight: 8,
+    options: [
+      {
+        label: 'Cortar de cabeça',
+        detail: 'Subir junto. Se errar o tempo, é gol.',
+        attr: 'fis',
+        base: 0.55,
+        success: {
+          rating: 0.4,
+          morale: { confidence: 5, coach: 5 },
+          text: '{jogador} sobe firme e afasta o perigo da área.',
+        },
+        failure: {
+          opponentGoals: 1,
+          rating: -0.7,
+          morale: { confidence: -8, coach: -6 },
+          text: '{jogador} erra o tempo do salto e o {adversario} cabeceia para o gol.',
+        },
+      },
+      {
+        label: 'Marcar o homem',
+        detail: 'Deixa a bola para o goleiro e cola no atacante.',
+        attr: 'def',
+        base: 0.68,
+        success: {
+          rating: 0.3,
+          morale: { coach: 5, squad: 3 },
+          text: '{jogador} cola no atacante, o goleiro sai e domina a área.',
+        },
+        failure: {
+          rating: -0.3,
+          morale: { confidence: -4 },
+          text: '{jogador} fica entre a bola e o homem e não faz nem uma coisa nem outra.',
+        },
+      },
+    ],
+  },
+  {
+    id: 'interceptacao',
+    side: 'defesa',
+    prompt: 'O meia do {adversario} levanta a cabeça para lançar. {jogador} lê a jogada.',
+    phase: 'qualquer',
+    weight: 7,
+    options: [
+      {
+        label: 'Antecipar o lançamento',
+        detail: 'Interceptar e sair jogando na frente.',
+        attr: 'def',
+        base: 0.5,
+        success: {
+          assists: 1,
+          rating: 0.55,
+          morale: { confidence: 7, coach: 5, squad: 4 },
+          text: '{jogador} intercepta, sai jogando na hora certa e sai o gol. Assistência.',
+        },
+        failure: {
+          rating: -0.4,
+          morale: { coach: -5 },
+          text: '{jogador} antecipa errado e a bola passa por cima dele.',
+        },
+      },
+      {
+        label: 'Fechar o corredor',
+        detail: 'Nada de espetacular. Também nada de errado.',
+        attr: null,
+        base: 0.78,
+        success: {
+          rating: 0.15,
+          morale: { coach: 3 },
+          text: '{jogador} fecha o corredor e o lançamento sai pela linha de fundo.',
+        },
+        failure: {
+          rating: -0.2,
+          text: '{jogador} recua demais e o {adversario} avança sem oposição.',
+        },
+      },
+    ],
+  },
 ]
 
 /**
@@ -708,6 +869,22 @@ export const DECISIONS: readonly DecisionSpec[] = [
  * editado, e a primeira divergencia entre os dois quebraria o orcamento de
  * producao da partida sem nenhum sinal.
  */
+/**
+ * Que barra de timing a opcao abre, ou null quando ela e resolvida no sorteio.
+ *
+ * Derivado, e nao declarado: a barra existe para a **execucao** de um lance, e
+ * um lance so tem execucao quando produz algo e depende de um atributo do
+ * jogador. Deixar o batedor oficial cobrar o penalti produz gol e mesmo assim
+ * nao abre barra — quem executa nao e ele.
+ */
+export function timingKindOf(option: DecisionOption): TimingKind | null {
+  if (!option.attr) return null
+  if (option.success.goals) return 'finalizacao'
+  if (option.success.assists || option.success.teamGoals) return 'passe'
+
+  return null
+}
+
 export function isProductive(spec: DecisionSpec): boolean {
   return spec.options.some(
     (option) =>
@@ -726,6 +903,8 @@ export function eligibleDecisions(input: {
   used: readonly string[]
   /** Filtra por momentos que podem (ou nao) virar gol. */
   productive?: boolean
+  /** Filtra por lado do campo. Usado quando o foco pede um lance defensivo. */
+  side?: DecisionSide
 }): DecisionSpec[] {
   const phase = input.minute <= 45 ? 'inicio' : 'fim'
   const condition: DecisionCondition =
@@ -743,7 +922,18 @@ export function eligibleDecisions(input: {
     if (spec.phase !== 'qualquer' && spec.phase !== phase) return false
     if (spec.when && spec.when !== 'sempre' && spec.when !== condition) return false
     if (input.productive !== undefined && isProductive(spec) !== input.productive) return false
+    if (input.side && spec.side !== input.side) return false
 
     return true
   })
+}
+
+/**
+ * O peso do momento no sorteio, ja com o foco tatico.
+ *
+ * Fica aqui, junto do catalogo, porque `weight` e dado do catalogo — o motor
+ * so precisa saber o numero final.
+ */
+export function weightFor(spec: DecisionSpec, focus: MatchFocus): number {
+  return spec.weight * focusWeight(focus, spec.side)
 }

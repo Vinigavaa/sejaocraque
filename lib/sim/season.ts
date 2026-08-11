@@ -366,18 +366,40 @@ export function playerOutput(
  */
 const SQUAD_MARGIN = 10
 
+/**
+ * O piso de participacao do jogador da carreira.
+ *
+ * Ele e o protagonista: uma temporada em que ele fica de fora de um terco das
+ * partidas pode ser realista para o vigesimo homem de um elenco, mas nao e uma
+ * carreira que da vontade de jogar. Abaixo do nivel do elenco a disputa por
+ * posicao continua aparecendo — em minutos, em substituicao e em titularidade,
+ * nao em ficar fora da partida.
+ */
+export const MIN_PARTICIPATION = 0.9
+
+/**
+ * Que fracao das partidas o jogador disputa, de 0 a 1.
+ *
+ * Exportada porque o modo Jogo a Jogo decide o mesmo por partida, e as duas
+ * contas precisam ser a mesma para as carreiras continuarem comparaveis.
+ */
+export function participationShare(overall: number, clubStrength: number): number {
+  const gap = overall - clubStrength + SQUAD_MARGIN
+
+  return clamp(0.9 + gap / 40, MIN_PARTICIPATION, 1)
+}
+
 function matchesPlayed(
   overall: number,
   clubStrength: number,
   totalMatches: number,
   rng: Rng,
 ): number {
-  const gap = overall - clubStrength + SQUAD_MARGIN
-  const share = clamp(0.55 + gap / 20, 0.05, 1)
+  const share = participationShare(overall, clubStrength)
 
   // O jitter pode passar de 1 — sem o teto o jogador disputava 42 jogos numa
   // liga de 38 rodadas.
-  return Math.min(totalMatches, Math.round(totalMatches * share * jitter(rng, 0.12)))
+  return Math.min(totalMatches, Math.round(totalMatches * share * jitter(rng, 0.06)))
 }
 
 /**

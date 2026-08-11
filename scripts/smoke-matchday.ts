@@ -96,7 +96,10 @@ function playMatchdaySeason(state: CareerState) {
     // Sem ninguem para decidir, o motor joga seguro — que e exatamente o que
     // o botao "simular o resto" faz na interface.
     const done = finishLiveMatch(
-      simulateRestOfMatch(startLiveMatch(setup, morale, matchRng), matchRng),
+      simulateRestOfMatch(
+        startLiveMatch(setup, morale, 'equilibrado', matchRng),
+        matchRng,
+      ),
     )
 
     morale = moraleAfterMatch(done)
