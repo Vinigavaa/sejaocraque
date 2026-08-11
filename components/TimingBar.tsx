@@ -7,15 +7,12 @@ import { TIMING_WINDOW_MS, type TimingChallenge } from '@/lib/sim/liveTiming'
 import { Display, scaled, t } from './shared'
 
 /**
- * As duas cores proprias da barra.
+ * A cor propria da barra.
  *
- * Nao vem do tema porque nao existem em nenhum outro lugar do jogo: o trilho e
- * mais escuro que qualquer superficie da interface para que o verde salte dele,
- * e a faixa de acerto e um verde opaco, e nao o verde do tema com transparencia
- * — translucido sobre o trilho escuro ele ficava perto demais do fundo.
+ * Nao vem do tema porque nao existe em nenhum outro lugar do jogo: o trilho e
+ * mais escuro que qualquer superficie da interface para que o verde salte dele.
  */
 const TRACK = 'oklch(26% 0.01 55)'
-const ZONE = 'oklch(42% 0.09 150)'
 
 /**
  * A barra de timing: a parte jogada de um lance decisivo.
@@ -112,7 +109,6 @@ export function TimingBar({
   })
 
   const greenLeft = (challenge.center - challenge.green / 2) * 100
-  const perfectLeft = (challenge.center - challenge.perfect / 2) * 100
 
   return (
     <div>
@@ -182,24 +178,15 @@ export function TimingBar({
           touchAction: 'manipulation',
         }}
       >
-        {/* Duas faixas chapadas, sem borda: a escura e o acerto, a viva e o
-            miolo perfeito. Blocos solidos leem mais rapido que contorno — e a
-            uma travessia de meio segundo, ler rapido e o jogo inteiro. */}
+        {/* Uma faixa chapada, sem borda: o que esta verde e o acerto, e nada
+            mais. Bloco solido le mais rapido que contorno — e a uma travessia
+            de meio segundo, ler rapido e o jogo inteiro. */}
         <div
           style={{
             position: 'absolute',
             inset: 0,
             left: `${greenLeft}%`,
             width: `${challenge.green * 100}%`,
-            background: ZONE,
-          }}
-        />
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            left: `${perfectLeft}%`,
-            width: `${challenge.perfect * 100}%`,
             background: t.green,
           }}
         />

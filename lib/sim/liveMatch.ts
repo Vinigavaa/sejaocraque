@@ -32,7 +32,7 @@ import {
 } from './morale'
 import { clamp } from './positions'
 import { pick, poisson, range, sample, type Rng } from './rng'
-import { goalExpectation, MIN_PARTICIPATION, participationShare } from './season'
+import { goalExpectation } from './season'
 import type { NumericAttr, PlayerAttrs, Position } from './types'
 
 /**
@@ -370,7 +370,6 @@ type ScriptKind =
   /** Momento de contexto: cartao, lesao, treinador, torcida, vestiario. */
   | 'decisao'
   | 'lance'
-  | 'substituicao'
   /** Intervalo: a partida para e o foco pode mudar. */
   | 'intervalo'
 
@@ -382,9 +381,9 @@ export type LiveMatchState = {
   events: LiveEvent[]
   teamGoals: number
   opponentGoals: number
-  /** Se ele esta em campo agora. */
+  /** Se ele esta em campo agora. Comeca sempre em campo; so sai por vermelho,
+   *  lesao ou por uma escolha dele. */
   onPitch: boolean
-  started: boolean
   player: PlayerMatchResult
   /** Moral no inicio da partida — a base sobre a qual as decisoes somam. */
   morale: Morale
@@ -453,12 +452,6 @@ const MIN_CHANCE_RATE = 0.26
  */
 const AVERAGE_CONVERSION = 0.29
 
-/** Quanto um jogador que comeca no banco produz, em relacao a um titular. */
-const BENCH_SHARE = 0.5
-
-/** Minuto a partir do qual uma substituicao faz sentido. */
-const SUB_WINDOW: [number, number] = [58, 84]
-
 /** O apito do intervalo. */
 const HALFTIME_MINUTE = 45
 
@@ -468,21 +461,14 @@ export function startLiveMatch(
   focus: MatchFocus,
   rng: Rng,
 ): LiveMatchState {
-  const started = startsMatch(setup, morale, rng)
-
-  const [forExpectation, againstExpectation] = sideExpectations(setup, started)
+  const [forExpectation, againstExpectation] = sideExpectations(setup)
 
   const teamPlan = poisson(rng, forExpectation)
   const opponentPlan = poisson(rng, againstExpectation)
 
   // A producao esperada dele sai do plano do time e volta como oportunidade.
-  //
-  // Quem comeca no banco continua tendo chance de decidir: reserva faz gol, e
-  // zerar a producao dele empurrava a temporada inteira para baixo do modo
-  // classico. O que muda e a escala — meia hora em campo rende menos que
-  // noventa minutos.
-  const expected =
-    (setup.expected.goals + setup.expected.assists) * (started ? 1 : BENCH_SHARE)
+  // Como ele joga a partida inteira, e a esperada cheia.
+  const expected = setup.expected.goals + setup.expected.assists
   const chances = chanceBudget(setup, morale, expected, rng)
 
   const script = buildScript(
@@ -494,7 +480,6 @@ export function startLiveMatch(
       // Sao eles que fazem a partida ter decisao mesmo para um zagueiro de
       // segunda divisao, que quase nao recebe chance de gol.
       context: clamp(range(rng, MIN_DECISIONS, MAX_DECISIONS) - chances, 1, MAX_DECISIONS),
-      started,
     },
     rng,
   )
@@ -505,10 +490,9 @@ export function startLiveMatch(
     events: [],
     teamGoals: 0,
     opponentGoals: 0,
-    onPitch: started,
-    started,
+    onPitch: true,
     player: {
-      played: started,
+      played: true,
       minutes: 0,
       goals: 0,
       assists: 0,
@@ -589,54 +573,9 @@ function chanceBudget(
   return Math.min(stochasticRound(raw, rng), MAX_CHANCES)
 }
 
-/**
- * Com que frequencia o jogador entra em campo, de 0 a 1.
- *
- * Deliberadamente a mesma conta de `participationShare`, no modo classico:
- * nivel contra elenco, com a margem de 10 porque a forca do clube descreve o
- * elenco e nao o titular medio. A relacao com o treinador desloca a linha — e
- * o caminho concreto pelo qual discutir na beira do campo custa minutos.
- *
- * Ter as duas contas iguais e o que impede os dois modos de divergirem: sem
- * isso um garoto de 16 anos disputava 37 dos 38 jogos num modo e 28 no outro,
- * e a carreira inteira andava em ritmos diferentes.
- */
-export function appearanceShare(setup: MatchSetup, morale: Morale): number {
-  return clamp(
-    participationShare(setup.overall, setup.team.strength) +
-      moraleFactor(morale.coach) * 0.08,
-    MIN_PARTICIPATION,
-    1,
-  )
-}
-
-/**
- * Quanto da presenca vem de comecar jogando.
- *
- * O resto entra do banco. Quem esta acima do elenco e titular praticamente
- * sempre; quem esta abaixo ainda comeca a maioria das partidas, e a relacao
- * com o treinador move essa fronteira nos dois sentidos.
- *
- * O piso e alto de proposito. A versao anterior deixava um jogador jovem no
- * banco com frequencia realista e carreira chata: eram partidas inteiras
- * assistindo, sem nenhuma decisao para tomar. A disputa por posicao continua
- * existindo — ela aparece nos minutos e na substituicao, nao em ficar de fora.
- */
-function startShare(setup: MatchSetup, morale: Morale): number {
-  const gap = setup.overall - setup.team.strength
-
-  return clamp(0.72 + gap / 40 + moraleFactor(morale.coach) * 0.15, 0.65, 0.97)
-}
-
-/** Se o jogador comeca jogando. */
-export function startsMatch(setup: MatchSetup, morale: Morale, rng: Rng): boolean {
-  return rng() < appearanceShare(setup, morale) * startShare(setup, morale)
-}
-
 /** Expectativa de gols dos dois lados, ja pelo ponto de vista do jogador. */
-function sideExpectations(setup: MatchSetup, started: boolean): [number, number] {
-  // Ele so reforca o time se estiver em campo desde o inicio.
-  const lift = started ? clamp(Math.max(0, setup.overall - setup.team.strength) * 0.22, 0, 5) : 0
+function sideExpectations(setup: MatchSetup): [number, number] {
+  const lift = clamp(Math.max(0, setup.overall - setup.team.strength) * 0.22, 0, 5)
   const team = setup.team.strength + lift
 
   const [home, away] = setup.atHome
@@ -658,7 +597,6 @@ function buildScript(
     opponentGoals: number
     chances: number
     context: number
-    started: boolean
   },
   rng: Rng,
 ): ScriptEntry[] {
@@ -686,10 +624,6 @@ function buildScript(
   take('decisao-gol', input.chances)
   take('decisao', input.context)
   take('lance', fillers)
-
-  // A janela de substituicao e a mesma para quem sai e para quem entra: o
-  // treinador mexe no time uma vez, e o que muda e de que lado o jogador esta.
-  entries.push({ minute: range(rng, SUB_WINDOW[0], SUB_WINDOW[1]), kind: 'substituicao' })
 
   // O intervalo entra sempre no mesmo minuto e nao consome nenhum slot: ele
   // nao e um lance, e uma pausa. Sem ele o foco escolhido antes do apito
@@ -740,9 +674,6 @@ export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchStat
         text: `${state.setup.opponent.name} marca.`,
         byPlayer: false,
       })
-
-    case 'substituicao':
-      return resolveSubstitution(at, rng)
 
     case 'intervalo':
       return {
@@ -1131,59 +1062,6 @@ function attributeEdge(attrs: PlayerAttrs, attr: NumericAttr): number {
 }
 
 /**
- * Substituicao no meio do jogo.
- *
- * Para quem comecou, e o risco de ser sacado; para quem ficou no banco, e a
- * chance de entrar. Os dois lados dependem do treinador — e da nota ate ali,
- * porque ninguem tira quem esta decidindo a partida.
- */
-function resolveSubstitution(state: LiveMatchState, rng: Rng): LiveMatchState {
-  const coach = moraleFactor(state.morale.coach)
-
-  if (!state.onPitch && !state.player.red && !state.player.injured) {
-    // A chance de entrar e o que falta para fechar a presenca total. Assim a
-    // soma "comecou jogando" + "entrou depois" bate com `appearanceShare`, e
-    // nao existe presenca extra escondida na substituicao.
-    const appearance = appearanceShare(state.setup, state.morale)
-    const started = appearance * startShare(state.setup, state.morale)
-    const chance = clamp((appearance - started) / Math.max(1 - started, 0.01), 0.02, 0.9)
-
-    if (rng() >= chance) return state
-
-    return withEvent(
-      { ...state, onPitch: true, player: { ...state.player, played: true } },
-      {
-        minute: state.minute,
-        type: 'substituicao',
-        side: 'team',
-        text: `${state.setup.playerName} entra em campo.`,
-        byPlayer: true,
-      },
-    )
-  }
-
-  if (!state.onPitch) return state
-
-  // Quem esta bem em campo nao sai. `rating` aqui ainda e o acumulado das
-  // decisoes, entao ele mede exatamente o que aconteceu ate agora.
-  const performance = state.player.rating + state.player.goals * 0.8
-  const chance = clamp(0.3 - coach * 0.25 - performance * 0.12, 0.03, 0.75)
-
-  if (rng() >= chance) return state
-
-  return withEvent(
-    { ...state, onPitch: false },
-    {
-      minute: state.minute,
-      type: 'substituicao',
-      side: 'team',
-      text: `${state.setup.playerName} é substituído.`,
-      byPlayer: true,
-    },
-  )
-}
-
-/**
  * Joga o resto sozinho.
  *
  * O jogador pode sair da partida a qualquer momento; o que ele nao pode e
@@ -1201,7 +1079,7 @@ export function simulateRestOfMatch(state: LiveMatchState, rng: Rng): LiveMatchS
     // a chance original do lance. Pular a partida nunca e melhor nem pior do
     // que joga-la sem acertar o timing nenhuma vez.
     if (current.timing) {
-      current = resolveLiveTiming(current, blindCursor(rng), rng)
+      current = resolveLiveTiming(current, blindCursor(current.timing.challenge, rng), rng)
       continue
     }
 
@@ -1310,24 +1188,19 @@ export function moraleAfterMatch(state: LiveMatchState): Morale {
 /**
  * Minutos em campo.
  *
- * Aproximacao de proposito: o motor guarda quando ele entrou ou saiu apenas
- * como evento, e reconstruir a partir da lista e mais honesto do que manter um
- * contador paralelo que pode divergir dela.
+ * Ele comeca jogando, entao a conta e o minuto em que saiu — se saiu. O motor
+ * guarda a saida apenas como evento, e reconstruir a partir da lista e mais
+ * honesto do que manter um contador paralelo que pode divergir dela.
  */
 function playedMinutes(state: LiveMatchState): number {
-  if (!state.player.played) return 0
-
-  const entry = state.events.find(
-    (event) => event.type === 'substituicao' && event.text.includes('entra em campo'),
-  )
   const exit = state.events.find(
     (event) =>
-      (event.type === 'substituicao' && event.text.includes('substituído')) ||
+      event.type === 'substituicao' ||
       event.type === 'lesao' ||
       (event.type === 'cartao' && state.player.red),
   )
 
-  return Math.max(0, (exit?.minute ?? MATCH_MINUTES) - (entry?.minute ?? 0))
+  return exit?.minute ?? MATCH_MINUTES
 }
 
 function withEvent(state: LiveMatchState, event: LiveEvent): LiveMatchState {

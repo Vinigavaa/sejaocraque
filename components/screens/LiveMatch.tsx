@@ -6,7 +6,6 @@ import type { Game } from '@/lib/game/useGame'
 import { MATCH_MINUTES, type LiveEvent } from '@/lib/sim/liveMatch'
 
 import { ClubCrest } from '../Crest'
-import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
 import { Display, GhostButton, PrimaryButton, scaled, SectionLabel, t } from '../shared'
 
@@ -27,7 +26,6 @@ export function LiveMatch({ game }: { game: Game }) {
   return (
     <ScreenLayout
       mobileOrder={['center', 'left', 'right']}
-      right={<PlayerSheet game={game} />}
       left={
         <>
       <SectionLabel >Lances</SectionLabel>

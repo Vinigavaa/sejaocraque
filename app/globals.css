@@ -87,6 +87,13 @@ button {
   min-width: 0;
 }
 
+/* No celular a marca sai assim que existe um jogador: a largura e curta demais
+   para as duas coisas, e quem esta jogando quer ler o proprio nome e o clube,
+   nao o nome do jogo. No desktop (abaixo) ela volta. */
+[data-shell-head][data-has-player] [data-shell-brand] {
+  display: none;
+}
+
 @media (min-width: 1024px) {
   [data-shell] {
     min-height: 100dvh;
@@ -97,6 +104,10 @@ button {
     flex-wrap: nowrap;
     gap: calc(24px * var(--ui-scale));
     padding: 0 calc(24px * var(--ui-scale));
+  }
+
+  [data-shell-head][data-has-player] [data-shell-brand] {
+    display: block;
   }
 
   [data-layout] {

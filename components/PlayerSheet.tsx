@@ -2,18 +2,18 @@ import type { Game } from '@/lib/game/useGame'
 import { careerTotals } from '@/lib/sim/ladder'
 import { ALL_ATTRS, ATTR_LABEL, isStarAttr } from '@/lib/sim/types'
 
-import { PlayerCard } from './PlayerCard'
 import { Display, scaled, SectionLabel, t } from './shared'
 
 /**
  * A ficha do trilho direito — o "placar" sempre visivel do desktop.
  *
- * Recebe o `Game` inteiro em vez de seis props: ela aparece em oito das nove
- * telas, e repassar os mesmos campos por todas seria repeticao pura, com uma
- * chance de erro por tela. `useGame` ja e o contrato unico de estado aqui.
+ * Recebe o `Game` inteiro em vez de seis props: ela aparece em varias telas, e
+ * repassar os mesmos campos por todas seria repeticao pura. `useGame` ja e o
+ * contrato unico de estado aqui.
  *
- * Enquanto nao ha jogador, nao renderiza nada. Durante o draft, mostra os
- * oito espacos sendo preenchidos; depois, o cartao e os totais.
+ * Enquanto nao ha jogador, mostra os oito espacos do draft sendo preenchidos;
+ * depois, os totais da carreira. O cartao do jogador nao entra: nome, camisa,
+ * posicao e overall ja estao no cabecalho, e os atributos na ficha de perfil.
  */
 export function PlayerSheet({ game }: { game: Game }) {
   if (game.draft && !game.career) return <DraftSlots game={game} />
@@ -77,33 +77,21 @@ function CareerSheet({ game }: { game: Game }) {
   const totals = careerTotals(career)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(16) }}>
-      <PlayerCard
-        variant="rail"
-        name={career.config.name}
-        shirtNumber={career.config.shirtNumber}
-        position={career.config.position}
-        nationality={career.config.nationality}
-        overall={game.liveOverall}
-        attrs={career.peakAttrs}
-      />
-
-      <div>
-        <SectionLabel>Carreira</SectionLabel>
-        <div
-          style={{
-            marginTop: scaled(10),
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: scaled(10),
-          }}
-        >
-          <Total value={totals.matches} label="jogos" />
-          <Total value={totals.goals} label="gols" />
-          <Total value={totals.assists} label="assistências" />
-          <Total value={totals.titles} label="títulos" />
-          <Total value={totals.ballonDOrs} label="bolas de ouro" gold />
-        </div>
+    <div>
+      <SectionLabel>Carreira</SectionLabel>
+      <div
+        style={{
+          marginTop: scaled(10),
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, 1fr)',
+          gap: scaled(10),
+        }}
+      >
+        <Total value={totals.matches} label="jogos" />
+        <Total value={totals.goals} label="gols" />
+        <Total value={totals.assists} label="assistências" />
+        <Total value={totals.titles} label="títulos" />
+        <Total value={totals.ballonDOrs} label="bolas de ouro" gold />
       </div>
     </div>
   )

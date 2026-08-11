@@ -294,25 +294,7 @@ export function Live({ game }: { game: Game }) {
                   fontFamily: 'inherit',
                 }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: scaled(10),
-                  }}
-                >
-                  <div style={{ fontSize: scaled(14), fontWeight: 800 }}>{option.label}</div>
-                  {/* A chance aparece porque a decisão precisa ser informada:
-                      arriscar tem que ser escolha, não surpresa. A opção sem
-                      risco não mostra número — anunciar "100%" só sugeriria
-                      que existe um sorteio ali. */}
-                  {option.chance < 1 && (
-                    <Display size={14} style={{ color: chanceColor(option.chance) }}>
-                      {Math.round(option.chance * 100)}%
-                    </Display>
-                  )}
-                </div>
+                <div style={{ fontSize: scaled(14), fontWeight: 800 }}>{option.label}</div>
                 <div
                   style={{
                     marginTop: scaled(4),
@@ -345,7 +327,7 @@ export function Live({ game }: { game: Game }) {
             <div>
               {live.onPitch
                 ? `Foco: ${FOCUS_LABEL[live.focus]}. O jogo para quando algo depender de você.`
-                : 'No banco, esperando o treinador.'}
+                : 'Você saiu da partida. O resto do jogo corre sem você.'}
             </div>
           </div>
         )
@@ -486,13 +468,6 @@ function TimingFeedback({ outcome }: { outcome: TimingOutcome }) {
 function statusOf(live: NonNullable<Game['live']>): string {
   if (live.player.red) return 'EXP.'
   if (live.player.injured) return 'LES.'
-  if (!live.player.played) return 'BANCO'
-  if (!live.onPitch) return 'SUBST.'
+  if (!live.onPitch) return 'FORA'
   return `${live.player.yellow > 0 ? 'AMAR.' : 'EM CAMPO'}`
-}
-
-function chanceColor(chance: number): string {
-  if (chance >= 0.6) return t.greenText
-  if (chance >= 0.35) return t.goldText
-  return t.dangerText
 }
