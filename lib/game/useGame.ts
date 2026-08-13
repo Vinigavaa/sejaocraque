@@ -43,7 +43,6 @@ import {
   missLiveTiming,
   moraleAfterMatch,
   resolveLiveTiming,
-  resumeLiveMatch,
   simulateRestOfMatch,
   startLiveMatch,
   startLiveTiming,
@@ -685,11 +684,6 @@ export function useGame() {
     setLive((state) => (state ? kickOffLiveMatch(state) : state))
   }, [])
 
-  /** Volta do intervalo. */
-  const resumeLive = useCallback(() => {
-    setLive((state) => (state ? resumeLiveMatch(state) : state))
-  }, [])
-
   /** Simula o resto da partida. As consequências continuam valendo. */
   const skipLive = useCallback(() => {
     const rng = matchRng.current
@@ -1070,7 +1064,6 @@ export function useGame() {
     resolveTiming,
     expireTiming,
     kickOffLive,
-    resumeLive,
     skipLive,
     finishLive,
     decisiveTimeline,
