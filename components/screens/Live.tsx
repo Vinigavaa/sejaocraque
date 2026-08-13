@@ -26,14 +26,13 @@ export function Live({ game }: { game: Game }) {
   const live = game.live
 
   // O relógio só corre quando nada depende do jogador: decisão aberta, barra
-  // de timing correndo, apito inicial e intervalo congelam a partida — é a
-  // razão de o modo existir.
+  // de timing correndo e apito inicial congelam a partida — é a razão de o
+  // modo existir. O intervalo não pausa mais: é só um aviso no meio do jogo.
   const running =
     Boolean(live) &&
     !live?.opportunity &&
     !live?.timing &&
     !live?.kickoff &&
-    !live?.halftime &&
     !live?.finished
 
   // A dependência é a função, e não `game`: o hook devolve um objeto novo a
@@ -209,16 +208,12 @@ export function Live({ game }: { game: Game }) {
         <Stat value={statusOf(live)} label="Situação" size={20} />
       </div>
 
-      {(live.kickoff || live.halftime) && (
+      {live.kickoff && (
         <PausePanel
-          title={live.kickoff ? 'Antes do apito' : `Intervalo · ${live.minute}'`}
-          detail={
-            live.kickoff
-              ? `${setup.team.name} × ${setup.opponent.name}. Prepare-se.`
-              : `${live.teamGoals} a ${live.opponentGoals} no intervalo.`
-          }
-          onConfirm={live.kickoff ? game.kickOffLive : game.resumeLive}
-          confirmLabel={live.kickoff ? 'COMEÇAR A PARTIDA →' : 'VOLTAR PARA O SEGUNDO TEMPO →'}
+          title="Antes do apito"
+          detail={`${setup.team.name} × ${setup.opponent.name}. Prepare-se.`}
+          onConfirm={game.kickOffLive}
+          confirmLabel="COMEÇAR A PARTIDA →"
         />
       )}
 
@@ -292,8 +287,7 @@ export function Live({ game }: { game: Game }) {
       {!live.opportunity &&
         !live.timing &&
         !live.finished &&
-        !live.kickoff &&
-        !live.halftime && (
+        !live.kickoff && (
           <div
             style={{
               marginTop: scaled(16),
@@ -328,10 +322,11 @@ export function Live({ game }: { game: Game }) {
 }
 
 /**
- * A pausa antes do apito e no intervalo.
+ * A pausa antes do apito.
  *
- * Sem escolha nenhuma — é só o ritmo do jogo: um instante para ler o
- * confronto (ou o placar do primeiro tempo) antes de a bola voltar a rolar.
+ * Sem escolha nenhuma — é só um instante para ler o confronto antes de a bola
+ * rolar. Dali em diante o jogo flui direto, intervalo incluso: o placar do
+ * primeiro tempo vira só mais uma linha em Lances.
  */
 function PausePanel({
   title,

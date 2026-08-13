@@ -403,8 +403,6 @@ export type LiveMatchState = {
   script: ScriptEntry[]
   /** Antes do apito inicial: a partida espera a confirmacao do jogador. */
   kickoff: boolean
-  /** No intervalo: a partida espera a confirmacao para o segundo tempo. */
-  halftime: boolean
   finished: boolean
 }
 
@@ -504,7 +502,6 @@ export function startLiveMatch(
     lastTiming: null,
     script,
     kickoff: true,
-    halftime: false,
     finished: false,
   }
 }
@@ -627,9 +624,9 @@ function buildScript(
  */
 export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchState {
   if (state.finished || state.opportunity || state.timing) return state
-  // Antes do apito e no intervalo quem destrava e o jogador, confirmando que
-  // quer seguir. O relogio nao corre por cima dessa pausa.
-  if (state.kickoff || state.halftime) return state
+  // Antes do apito quem destrava e o jogador, confirmando que quer comecar.
+  // O relogio nao corre por cima dessa pausa.
+  if (state.kickoff) return state
 
   const next = state.script[0]
 
@@ -660,20 +657,13 @@ export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchStat
       })
 
     case 'intervalo':
-      return {
-        ...at,
-        halftime: true,
-        events: [
-          ...at.events,
-          {
-            minute: HALFTIME_MINUTE,
-            type: 'aviso',
-            side: 'team',
-            text: `Intervalo: ${at.teamGoals} a ${at.opponentGoals}.`,
-            byPlayer: false,
-          },
-        ],
-      }
+      return withEvent(at, {
+        minute: HALFTIME_MINUTE,
+        type: 'aviso',
+        side: 'team',
+        text: `Intervalo: ${at.teamGoals} a ${at.opponentGoals}.`,
+        byPlayer: false,
+      })
 
     case 'chance':
       return openOpportunity(at, rng)
@@ -1090,8 +1080,8 @@ export function simulateRestOfMatch(state: LiveMatchState, rng: Rng): LiveMatchS
       continue
     }
 
-    if (current.kickoff || current.halftime) {
-      current = { ...current, kickoff: false, halftime: false }
+    if (current.kickoff) {
+      current = { ...current, kickoff: false }
       continue
     }
 
@@ -1148,7 +1138,6 @@ export function finishLiveMatch(state: LiveMatchState): LiveMatchState {
     opportunity: null,
     timing: null,
     kickoff: false,
-    halftime: false,
     moraleDelta: mergeDeltas([state.moraleDelta, outcome]),
     player: { ...player, rating, minutes },
   }
@@ -1157,11 +1146,6 @@ export function finishLiveMatch(state: LiveMatchState): LiveMatchState {
 /** Apito inicial. */
 export function kickOffLiveMatch(state: LiveMatchState): LiveMatchState {
   return state.kickoff ? { ...state, kickoff: false } : state
-}
-
-/** Volta do intervalo. */
-export function resumeLiveMatch(state: LiveMatchState): LiveMatchState {
-  return state.halftime ? { ...state, halftime: false } : state
 }
 
 /** A moral da carreira depois desta partida. */
