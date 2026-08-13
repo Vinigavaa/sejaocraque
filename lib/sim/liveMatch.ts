@@ -1,10 +1,4 @@
 import {
-  FOCUS_ATTACK_SHARE,
-  NEUTRAL_ATTACK_SHARE,
-  focusEdge,
-  type MatchFocus,
-} from './liveFocus'
-import {
   blindCursor,
   buildTiming,
   connected,
@@ -407,14 +401,10 @@ export type LiveMatchState = {
   /** O resultado do ultimo clique, para a interface poder mostrar o que saiu. */
   lastTiming: TimingOutcome | null
   script: ScriptEntry[]
-  /** Foco tatico atual. Escolhido antes do apito e trocavel no intervalo. */
-  focus: MatchFocus
-  /** Antes do apito inicial: a partida espera a escolha do foco. */
+  /** Antes do apito inicial: a partida espera a confirmacao do jogador. */
   kickoff: boolean
-  /** No intervalo: a partida espera a confirmacao do foco do segundo tempo. */
+  /** No intervalo: a partida espera a confirmacao para o segundo tempo. */
   halftime: boolean
-  /** Se o foco ja foi trocado no intervalo. Uma troca por partida. */
-  focusChanged: boolean
   finished: boolean
 }
 
@@ -456,10 +446,19 @@ const MAX_INCIDENTS = 3
 /** O apito do intervalo. */
 const HALFTIME_MINUTE = 45
 
+/**
+ * Fatia do orcamento ofensivo que de fato vira oportunidade clara — o resto
+ * fica em lance defensivo.
+ *
+ * Ancora a paridade com o modo classico: o orcamento e dividido por este
+ * mesmo valor antes de virar contagem de chances, entao a producao do Jogo a
+ * Jogo bate com a que a simulacao completa produziria.
+ */
+const ATTACK_SHARE = 0.78
+
 export function startLiveMatch(
   setup: MatchSetup,
   morale: Morale,
-  focus: MatchFocus,
   rng: Rng,
 ): LiveMatchState {
   const [forExpectation, againstExpectation] = sideExpectations(setup)
@@ -504,10 +503,8 @@ export function startLiveMatch(
     timing: null,
     lastTiming: null,
     script,
-    focus,
     kickoff: true,
     halftime: false,
-    focusChanged: false,
     finished: false,
   }
 }
@@ -534,9 +531,9 @@ export function startLiveMatch(
  * - **competicao** entra pela fase: mata-mata e mais travado que pontos
  *   corridos.
  *
- * O resultado e o teto — o que um jogador em foco Ataque receberia. O foco
- * filtra cada oportunidade na hora em que ela acontece, o que e o que permite
- * trocar de foco no intervalo sem reescrever o segundo tempo.
+ * O resultado e o teto de lances que o roteiro reserva; `ATTACK_SHARE` decide
+ * quantos deles de fato viram oportunidade quando a partida chega la (ver
+ * `openOpportunity`), e o resto fica em lance defensivo.
  */
 function chanceBudget(
   setup: MatchSetup,
@@ -544,7 +541,7 @@ function chanceBudget(
   expected: number,
   rng: Rng,
 ): number {
-  const base = expected / AVERAGE_CONVERSION / NEUTRAL_ATTACK_SHARE
+  const base = expected / AVERAGE_CONVERSION / ATTACK_SHARE
 
   const opposition = clamp(
     1 + (setup.team.strength - setup.opponent.strength) / 70,
@@ -613,9 +610,8 @@ function buildScript(
   take('lance', fillers)
 
   // O intervalo entra sempre no mesmo minuto e nao consome nenhum slot: ele
-  // nao e um lance, e uma pausa. Sem ele o foco escolhido antes do apito
-  // valeria para os noventa minutos, e o modo perderia a leitura de jogo —
-  // que e o motivo de o foco ser trocavel.
+  // nao e um lance, e uma pausa que mostra o placar parcial antes do segundo
+  // tempo.
   entries.push({ minute: HALFTIME_MINUTE, kind: 'intervalo' })
 
   return entries.sort((a, b) => a.minute - b.minute)
@@ -631,8 +627,8 @@ function buildScript(
  */
 export function advanceLiveMatch(state: LiveMatchState, rng: Rng): LiveMatchState {
   if (state.finished || state.opportunity || state.timing) return state
-  // Antes do apito e no intervalo quem destrava e o jogador, escolhendo o
-  // foco. O relogio nao corre por cima de uma decisao dele.
+  // Antes do apito e no intervalo quem destrava e o jogador, confirmando que
+  // quer seguir. O relogio nao corre por cima dessa pausa.
   if (state.kickoff || state.halftime) return state
 
   const next = state.script[0]
@@ -724,15 +720,14 @@ const OPPORTUNITY_PROMPT: Record<TimingKind, readonly string[]> = {
 /**
  * Abre a oportunidade — ou a transforma em lance defensivo.
  *
- * O orcamento foi montado no teto, o que um jogador em Ataque receberia, e e
- * aqui que o foco filtra. Fazer assim, e nao no roteiro, e o que permite
- * trocar de foco no intervalo: o slot ja existe, e o que muda e no que ele se
- * transforma.
+ * O orcamento foi montado no teto (ver `chanceBudget`), e e aqui que
+ * `ATTACK_SHARE` filtra: nem todo slot reservado vira chance de fato, parte
+ * fica em lance defensivo.
  */
 function openOpportunity(state: LiveMatchState, rng: Rng): LiveMatchState {
   if (!state.onPitch) return withEvent(state, filler(state, rng))
 
-  if (rng() >= FOCUS_ATTACK_SHARE[state.focus]) {
+  if (rng() >= ATTACK_SHARE) {
     return withEvent(state, {
       minute: state.minute,
       type: 'aviso',
@@ -800,11 +795,7 @@ function conversionChance(state: LiveMatchState, kind: TimingKind): number {
   const squad = shooting ? 0 : moraleFactor(state.morale.squad) * 0.06
   const opposition = (state.setup.opponent.strength - state.setup.team.strength) / 400
 
-  // O foco tambem inclina o lance, de leve: quem joga pelo ataque chega melhor
-  // na frente.
-  const focus = focusEdge(state.focus, 'ataque')
-
-  return clamp(base + attribute + confidence + squad + focus - opposition, 0.05, 0.95)
+  return clamp(base + attribute + confidence + squad - opposition, 0.05, 0.95)
 }
 
 /** ±0,2 no maximo: o atributo inclina o lance, nao decide sozinho. */
@@ -1161,23 +1152,6 @@ export function finishLiveMatch(state: LiveMatchState): LiveMatchState {
     moraleDelta: mergeDeltas([state.moraleDelta, outcome]),
     player: { ...player, rating, minutes },
   }
-}
-
-/**
- * Troca o foco tatico.
- *
- * So vale com a partida parada — antes do apito ou no intervalo. Deixar trocar
- * a qualquer momento transformaria o foco em botao de otimizacao: bastava
- * mudar para Ataque quando a chance aparecesse na tela.
- */
-export function setLiveFocus(state: LiveMatchState, focus: MatchFocus): LiveMatchState {
-  if (!state.kickoff && !state.halftime) return state
-  if (focus === state.focus) return state
-  // Uma troca por partida, e ela e a do intervalo. No apito inicial ainda nao
-  // houve partida nenhuma para ler, entao escolher ali nao gasta a troca.
-  if (state.halftime && state.focusChanged) return state
-
-  return { ...state, focus, focusChanged: state.focusChanged || state.halftime }
 }
 
 /** Apito inicial. */

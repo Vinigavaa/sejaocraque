@@ -3,12 +3,6 @@
 import { useEffect } from 'react'
 
 import type { Game } from '@/lib/game/useGame'
-import {
-  FOCUS_DETAIL,
-  FOCUS_LABEL,
-  MATCH_FOCUSES,
-  type MatchFocus,
-} from '@/lib/sim/liveFocus'
 import { MATCH_MINUTES } from '@/lib/sim/liveMatch'
 import type { TimingOutcome } from '@/lib/sim/liveTiming'
 
@@ -216,11 +210,13 @@ export function Live({ game }: { game: Game }) {
       </div>
 
       {(live.kickoff || live.halftime) && (
-        <FocusPanel
+        <PausePanel
           title={live.kickoff ? 'Antes do apito' : `Intervalo · ${live.minute}'`}
-          focus={live.focus}
-          locked={live.halftime && live.focusChanged}
-          onChoose={game.chooseFocus}
+          detail={
+            live.kickoff
+              ? `${setup.team.name} × ${setup.opponent.name}. Prepare-se.`
+              : `${live.teamGoals} a ${live.opponentGoals} no intervalo.`
+          }
           onConfirm={live.kickoff ? game.kickOffLive : game.resumeLive}
           confirmLabel={live.kickoff ? 'COMEÇAR A PARTIDA →' : 'VOLTAR PARA O SEGUNDO TEMPO →'}
         />
@@ -310,7 +306,7 @@ export function Live({ game }: { game: Game }) {
             {live.lastTiming && <TimingFeedback outcome={live.lastTiming} />}
             <div>
               {live.onPitch
-                ? `Foco: ${FOCUS_LABEL[live.focus]}. O jogo para quando a bola for sua.`
+                ? 'O jogo para quando a bola for sua.'
                 : 'Você saiu da partida. O resto do jogo corre sem você.'}
             </div>
           </div>
@@ -332,24 +328,19 @@ export function Live({ game }: { game: Game }) {
 }
 
 /**
- * A escolha do foco, antes do apito e no intervalo.
+ * A pausa antes do apito e no intervalo.
  *
- * É o único lugar onde ela acontece. Deixar trocar durante o jogo faria do
- * foco um botão de otimização — bastava mudar para Ataque assim que a chance
- * aparecesse na tela, e a leitura de jogo deixaria de existir.
+ * Sem escolha nenhuma — é só o ritmo do jogo: um instante para ler o
+ * confronto (ou o placar do primeiro tempo) antes de a bola voltar a rolar.
  */
-function FocusPanel({
+function PausePanel({
   title,
-  focus,
-  locked,
-  onChoose,
+  detail,
   onConfirm,
   confirmLabel,
 }: {
   title: string
-  focus: MatchFocus
-  locked: boolean
-  onChoose: (focus: MatchFocus) => void
+  detail: string
   onConfirm: () => void
   confirmLabel: string
 }) {
@@ -362,70 +353,16 @@ function FocusPanel({
         borderRadius: 8,
         background: t.card,
         padding: scaled(16),
+        textAlign: 'center',
       }}
     >
-      <SectionLabel>{title} · foco tático</SectionLabel>
+      <SectionLabel>{title}</SectionLabel>
 
-      <div
-        style={{
-          marginTop: scaled(10),
-          display: 'flex',
-          flexDirection: 'column',
-          gap: scaled(8),
-        }}
-      >
-        {MATCH_FOCUSES.map((option) => {
-          const active = option === focus
-
-          return (
-            <button
-              key={option}
-              onClick={() => onChoose(option)}
-              disabled={locked && !active}
-              style={{
-                textAlign: 'left',
-                background: active ? t.accentSoft : 'transparent',
-                border: `2px solid ${active ? t.accent : t.line}`,
-                borderRadius: 6,
-                padding: scaled(11),
-                color: t.text,
-                cursor: locked && !active ? 'default' : 'pointer',
-                opacity: locked && !active ? 0.4 : 1,
-                fontFamily: 'inherit',
-              }}
-            >
-              <div style={{ fontSize: scaled(14), fontWeight: 800 }}>
-                {FOCUS_LABEL[option]}
-              </div>
-              <div
-                style={{
-                  marginTop: scaled(3),
-                  fontSize: scaled(11),
-                  color: t.mutedStrong,
-                  lineHeight: 1.4,
-                }}
-              >
-                {FOCUS_DETAIL[option]}
-              </div>
-            </button>
-          )
-        })}
+      <div style={{ marginTop: scaled(8), fontSize: scaled(13), color: t.mutedStrong }}>
+        {detail}
       </div>
 
-      <div
-        style={{
-          marginTop: scaled(10),
-          fontSize: scaled(10),
-          color: t.faintText,
-          lineHeight: 1.4,
-        }}
-      >
-        {locked
-          ? 'Você já mexeu no foco nesta partida.'
-          : 'Dá para mudar uma vez, no intervalo.'}
-      </div>
-
-      <PrimaryButton onClick={onConfirm} style={{ marginTop: scaled(12) }}>
+      <PrimaryButton onClick={onConfirm} style={{ marginTop: scaled(14), width: '100%' }}>
         {confirmLabel}
       </PrimaryButton>
     </div>

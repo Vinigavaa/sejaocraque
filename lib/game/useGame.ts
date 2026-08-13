@@ -44,13 +44,11 @@ import {
   moraleAfterMatch,
   resolveLiveTiming,
   resumeLiveMatch,
-  setLiveFocus,
   simulateRestOfMatch,
   startLiveMatch,
   startLiveTiming,
   type LiveMatchState,
 } from '@/lib/sim/liveMatch'
-import type { MatchFocus } from '@/lib/sim/liveFocus'
 import {
   completeRound,
   finishMatchdaySeason,
@@ -191,16 +189,6 @@ export function useGame() {
   const [matchday, setMatchday] = useState<MatchdaySeason | null>(null)
   const [live, setLive] = useState<LiveMatchState | null>(null)
 
-  /**
-   * O foco tático padrão da carreira.
-   *
-   * Mora aqui, e não dentro da partida, porque é uma preferência do jogador:
-   * quem escolheu jogar pelo ataque na rodada passada abre a próxima já em
-   * Ataque, em vez de ter que reescolher toda semana. A partida guarda uma
-   * cópia própria — o que ele mudar no intervalo vale para aquele jogo e
-   * também vira o novo padrão.
-   */
-  const [matchFocus, setMatchFocus] = useState<MatchFocus>('equilibrado')
   const [news, setNews] = useState<NewsItem[]>([])
 
   /**
@@ -574,9 +562,9 @@ export function useGame() {
     )
 
     setMatchday(season)
-    setLive(startLiveMatch(setup, career.morale, matchFocus, matchRng.current))
+    setLive(startLiveMatch(setup, career.morale, matchRng.current))
     setScreen('live')
-  }, [career, openMatchdaySeason, playerForMatch, closeSeason, matchFocus])
+  }, [career, openMatchdaySeason, playerForMatch, closeSeason])
 
   /**
    * Joga sozinho o que falta da temporada e abre o resumo.
@@ -617,7 +605,7 @@ export function useGame() {
         `${career.config.seed}:partida:${career.seasonIndex}:${roundIndex}`,
       )
       const done = finishLiveMatch(
-        simulateRestOfMatch(startLiveMatch(setup, morale, matchFocus, rng), rng),
+        simulateRestOfMatch(startLiveMatch(setup, morale, rng), rng),
       )
 
       morale = moraleAfterMatch(done)
@@ -658,7 +646,6 @@ export function useGame() {
     newsContext,
     pushNews,
     closeSeason,
-    matchFocus,
   ])
 
   const advanceLive = useCallback(() => {
@@ -693,21 +680,7 @@ export function useGame() {
     setLive((state) => (state ? missLiveTiming(state, rng) : state))
   }, [])
 
-  /** Troca o foco tático. Só vale com a partida parada. */
-  const chooseFocus = useCallback((focus: MatchFocus) => {
-    setLive((state) => {
-      if (!state) return state
-
-      const next = setLiveFocus(state, focus)
-      // Só vira preferência da carreira quando a troca de fato aconteceu: no
-      // intervalo ela pode ser recusada por já ter sido usada.
-      if (next.focus === focus) setMatchFocus(focus)
-
-      return next
-    })
-  }, [])
-
-  /** Apito inicial, depois de o foco estar escolhido. */
+  /** Apito inicial. */
   const kickOffLive = useCallback(() => {
     setLive((state) => (state ? kickOffLiveMatch(state) : state))
   }, [])
@@ -1096,8 +1069,6 @@ export function useGame() {
     startTiming,
     resolveTiming,
     expireTiming,
-    matchFocus,
-    chooseFocus,
     kickOffLive,
     resumeLive,
     skipLive,
