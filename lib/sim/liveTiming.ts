@@ -4,11 +4,10 @@ import type { Rng } from './rng'
 /**
  * A barra de timing — a parte jogada de um lance decisivo.
  *
- * Ate aqui o modo Jogo a Jogo resolvia tudo no sorteio: o jogador escolhia
- * entre chutar e passar, e um `rng()` dizia se saiu. A escolha continua sendo
- * dele, mas a **execucao** agora tambem: um cursor atravessa a barra e ele
- * clica: dentro do verde, o lance sai; no centro do verde, sai perfeito; fora,
- * erra.
+ * Ate aqui o modo Jogo a Jogo resolvia tudo no sorteio: um `rng()` dizia se o
+ * lance saiu. Agora quem decide e a **execucao**: um cursor atravessa a barra e
+ * o jogador clica — dentro do verde, o lance sai; no centro do verde, sai
+ * perfeito; fora, erra. E a unica interacao do modo.
  *
  * A largura do verde e proporcional a chance do lance — lance improvavel, alvo
  * estreito. Nao e mais *igual* a chance: o alvo e uma fatia dela (`ZONE_SHARE`),

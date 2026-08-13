@@ -1,14 +1,14 @@
 /**
  * O foco tatico do jogador dentro da partida.
  *
- * E a unica alavanca que o jogador tem **antes** de o lance existir: as
- * decisoes respondem ao que ja esta acontecendo, o foco decide o que tende a
- * acontecer. Ataque troca participacao defensiva por chance de gol, Defesa faz
- * o caminho inverso, e Equilibrado e a referencia — a producao dele e a que
- * fecha com a do modo classico.
+ * E a unica alavanca que o jogador tem **antes** de o lance existir: a barra
+ * responde ao que ja esta acontecendo, o foco decide o que tende a acontecer.
+ * Ataque troca participacao defensiva por chance de gol, Defesa faz o caminho
+ * inverso, e Equilibrado e a referencia — a producao dele e a que fecha com a
+ * do modo classico.
  *
- * Aqui so mora **dado e proporcao**. Quem sorteia o momento e quem calcula a
- * chance esta em `liveMatch.ts`.
+ * Aqui so mora **dado e proporcao**. Quem sorteia a oportunidade e quem
+ * calcula a chance esta em `liveMatch.ts`.
  */
 
 export type MatchFocus = 'ataque' | 'equilibrado' | 'defesa'
@@ -53,12 +53,11 @@ export const NEUTRAL_ATTACK_SHARE = FOCUS_ATTACK_SHARE.equilibrado
 /**
  * Quanto o foco inclina a chance de um lance dar certo.
  *
- * Pequeno de proposito: o foco decide **quantos** lances de cada tipo
- * aparecem, e so de leve o quanto o jogador rende neles. Se ele decidisse os
- * dois com peso, escolher Ataque com um atacante viraria a unica jogada
- * possivel.
+ * Pequeno de proposito: o foco decide **quantas** oportunidades aparecem, e so
+ * de leve o quanto o jogador rende nelas. Se ele decidisse as duas com peso,
+ * escolher Ataque com um atacante viraria a unica jogada possivel.
  */
-export function focusEdge(focus: MatchFocus, side: DecisionSide): number {
+export function focusEdge(focus: MatchFocus, side: FieldSide): number {
   if (side === 'neutro') return 0
 
   const attacking = side === 'ataque'
@@ -69,20 +68,5 @@ export function focusEdge(focus: MatchFocus, side: DecisionSide): number {
   return 0
 }
 
-/** De que lado do campo o momento acontece. */
-export type DecisionSide = 'ataque' | 'defesa' | 'neutro'
-
-/**
- * Peso extra no sorteio do momento, para que o foco tambem mude **quais**
- * lances aparecem, e nao so quantos.
- */
-export function focusWeight(focus: MatchFocus, side: DecisionSide): number {
-  if (side === 'neutro') return 1
-
-  const attacking = side === 'ataque'
-
-  if (focus === 'ataque') return attacking ? 1.6 : 0.6
-  if (focus === 'defesa') return attacking ? 0.6 : 1.8
-
-  return 1
-}
+/** De que lado do campo o lance acontece. */
+export type FieldSide = 'ataque' | 'defesa' | 'neutro'

@@ -95,6 +95,7 @@ function runCareer(
     shirtNumber: 10,
     peakAttrs: attrsFor(peak, position, rng),
     careerMode: 'classico',
+    startClubId: null,
   })
 
   state = setPreferences(state, preferences)
@@ -217,6 +218,7 @@ for (let index = 0; index < CAREERS; index++) {
     shirtNumber: 10,
     peakAttrs: attrsFor(88, 'ATA', rng),
     careerMode: 'classico',
+    startClubId: null,
   })
   state = setPreferences(state, ['it-1'])
 
@@ -269,6 +271,7 @@ for (const [country, count] of ranked.slice(0, 6)) {
       shirtNumber: 10,
       peakAttrs: attrsFor(80, 'ATA', rng),
       careerMode: 'classico',
+    startClubId: null,
     })
 
     let guard = 0

@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
 import { leagueById } from '@/lib/sim/data/leagues'
@@ -17,20 +19,17 @@ import { AgentHint } from '../AgentHint'
 import { ClubCrest, LeagueCrest } from '../Crest'
 import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
+import { SocialFeed } from '../SocialFeed'
 import { Badge, Display, scaled, SectionLabel, Stat, t } from '../shared'
-
-/** O alcance da notícia vira cor: a barra lateral diz o tamanho do assunto. */
-const REACH_COLOR: Record<string, string> = {
-  local: t.line,
-  nacional: t.accent,
-  continental: t.gold,
-  mundial: t.greenText,
-}
 
 const MORALE_KEYS: MoraleKey[] = ['confidence', 'coach', 'squad', 'reputation']
 
 export function Career({ game }: { game: Game }) {
   const career = game.career
+  // Fica na tela, e nao no estado do jogo: e uma pergunta de interface ("o
+  // popup esta aberto?"), do mesmo jeito que `choosingClub` em `Create.tsx`.
+  const [socialOpen, setSocialOpen] = useState(false)
+
   if (!career) return null
 
   // A divisão vem da carreira, não do clube: depois de um acesso o clube joga
@@ -109,126 +108,7 @@ export function Career({ game }: { game: Game }) {
             </div>
           </section>
         )}
-
-        <section>
-          <SectionLabel>Linha do tempo</SectionLabel>
-          <div
-            style={{
-              marginTop: scaled(8),
-              display: 'flex',
-              gap: scaled(6),
-              overflowX: 'auto',
-              paddingBottom: scaled(4),
-            }}
-          >
-            {career.seasons.map((season) => (
-              <div
-                key={season.label}
-                style={{
-                  flex: '0 0 auto',
-                  textAlign: 'center',
-                  background: t.card,
-                  border: `1px solid ${t.lineSoft}`,
-                  borderRadius: 6,
-                  padding: `${scaled(6)} ${scaled(8)}`,
-                }}
-              >
-                <Display size={13}>{season.age}</Display>
-                <ClubCrest clubId={season.clubId} size={14} style={{ margin: '0 auto' }} />
-                <div
-                  style={{
-                    fontSize: scaled(8),
-                    color: 'oklch(60% 0.015 70)',
-                    maxWidth: 60,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {clubById(season.clubId)?.name}
-                </div>
-              </div>
-            ))}
-            <div
-              style={{
-                flex: '0 0 auto',
-                textAlign: 'center',
-                border: `1px dashed oklch(95% 0.01 70 / 0.2)`,
-                borderRadius: 6,
-                padding: `${scaled(6)} ${scaled(10)}`,
-                color: t.faintText,
-                fontSize: scaled(9),
-                alignSelf: 'stretch',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              futuro
-            </div>
-          </div>
-        </section>
-
-        {game.news.length > 0 && (
-          <section>
-            <SectionLabel>Imprensa</SectionLabel>
-            <div
-              style={{
-                marginTop: scaled(8),
-                display: 'flex',
-                flexDirection: 'column',
-                gap: scaled(8),
-              }}
-            >
-              {game.news.map((news) => (
-                <article
-                  key={news.id}
-                  style={{
-                    border: `1px solid ${t.lineSoft}`,
-                    borderLeft: `2px solid ${REACH_COLOR[news.reach]}`,
-                    borderRadius: 6,
-                    background: t.card,
-                    padding: `${scaled(8)} ${scaled(10)}`,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: scaled(9),
-                      color: t.faintText,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.06em',
-                    }}
-                  >
-                    {news.outlet} · {news.round ? `${news.round}ª rodada` : news.season}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: scaled(3),
-                      fontSize: scaled(12),
-                      fontWeight: 700,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    {news.headline}
-                  </div>
-                  {news.body && (
-                    <div
-                      style={{
-                        marginTop: scaled(4),
-                        fontSize: scaled(11),
-                        color: t.mutedStrong,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {news.body}
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-</>}
+      </>}
       right={
         <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(16) }}>
           <PlayerSheet game={game} />
@@ -281,6 +161,22 @@ export function Career({ game }: { game: Game }) {
               PULAR PARA O FIM DA TEMPORADA
             </button>
           )}
+          <button
+            onClick={() => setSocialOpen(true)}
+            style={{
+              background: 'transparent',
+              border: `1px solid oklch(95% 0.01 70 / 0.2)`,
+              color: t.mutedStrong,
+              borderRadius: 6,
+              padding: scaled(10),
+              fontWeight: 700,
+              fontSize: scaled(12),
+              cursor: 'pointer',
+            }}
+          >
+            REDE SOCIAL
+            {game.social.length > 0 && ` · ${game.social.length}`}
+          </button>
           <button
             onClick={game.openAgent}
             style={{
@@ -507,6 +403,8 @@ export function Career({ game }: { game: Game }) {
 
         <TrainingPicker game={game} />
       </div>
+
+      {socialOpen && <SocialFeed game={game} onClose={() => setSocialOpen(false)} />}
     </ScreenLayout>
   )
 }

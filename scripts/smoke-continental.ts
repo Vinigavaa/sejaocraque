@@ -36,6 +36,7 @@ for (let career = 0; career < CAREERS; career++) {
     shirtNumber: 9,
     peakAttrs: PEAK,
     careerMode: 'classico',
+    startClubId: null,
   })
 
   while (!state.retired) {

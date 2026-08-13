@@ -48,22 +48,33 @@ export function ScreenLayout({
     >
       {order.map((slot) =>
         slots[slot] ? (
-          <div
-            key={slot}
-            data-slot={slot}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              padding: slot === 'center' ? scaled(20) : scaled(16),
-              // O centro nao cresce sem limite — uma linha de texto de 1800px
-              // nao se le. O teto so passa a valer acima de ~1700px de
-              // viewport; em 1440px o centro ja e menor que ele.
-              ...(slot === 'center'
-                ? { maxWidth: 1100, width: '100%', marginInline: 'auto', minHeight: '100%' }
-                : null),
-            }}
-          >
-            {slots[slot]}
+          // `data-slot` e quem rola (o CSS lhe da `overflow-y: auto`), e por
+          // isso precisa ocupar a faixa inteira do lote: e a borda dele que
+          // vira a barra de rolagem. A centralizacao do centro mora num filho
+          // à parte — se ficasse no proprio `data-slot`, a barra nascia na
+          // borda do conteudo centralizado, flutuando longe da lateral real
+          // da tela.
+          <div key={slot} data-slot={slot} style={{ display: 'flex', flexDirection: 'column' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                // Sem isso o item flex encolhe para caber nos 828px visiveis
+                // do `data-slot`, e o conteudo que sobra (o botao final,
+                // nestas telas) vaza por baixo em vez de esticar a altura
+                // real e disparar a rolagem.
+                flexShrink: 0,
+                padding: slot === 'center' ? scaled(20) : scaled(16),
+                // O centro nao cresce sem limite — uma linha de texto de 1800px
+                // nao se le. O teto so passa a valer acima de ~1700px de
+                // viewport; em 1440px o centro ja e menor que ele.
+                ...(slot === 'center'
+                  ? { maxWidth: 1100, width: '100%', marginInline: 'auto', minHeight: '100%' }
+                  : null),
+              }}
+            >
+              {slots[slot]}
+            </div>
           </div>
         ) : null,
       )}

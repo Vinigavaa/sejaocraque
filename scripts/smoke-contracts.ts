@@ -140,6 +140,7 @@ for (const peak of [88, 74, 60]) {
       shirtNumber: 10,
       peakAttrs: attrsFor(peak, 'ATA', rng),
       careerMode: 'classico',
+    startClubId: null,
     })
 
     let guard = 0

@@ -89,6 +89,7 @@ for (const target of LEVELS) {
       shirtNumber: 9,
       peakAttrs,
       careerMode: 'classico',
+    startClubId: null,
     })
 
     let won = 0

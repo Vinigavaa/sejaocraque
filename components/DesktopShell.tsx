@@ -24,11 +24,30 @@ export function DesktopShell({ game, children }: { game: Game; children: ReactNo
     <div data-shell>
       <header data-shell-head data-has-player={game.career ? '' : undefined}>
         <div data-shell-brand>
-          <Display size={20} style={{ letterSpacing: '0.02em' }}>
-            CRAQUE
+          <Display size={22} style={{ letterSpacing: '0.01em', textTransform: 'lowercase' }}>
+            seja<span style={{ color: t.accent }}>o</span>craque.com
           </Display>
         </div>
-        <PlayerLine game={game} />
+        {/* A assinatura so aparece enquanto nao ha carreira: com jogador em campo
+            o lugar dela e da identificacao do jogador. */}
+        {game.career ? (
+          <PlayerLine game={game} />
+        ) : (
+          <div
+            style={{
+              // A regra do `globals.css` da `flex:1` ao ultimo filho: sem o
+              // alinhamento a direita a assinatura ficaria colada na marca.
+              marginLeft: 'auto',
+              textAlign: 'right',
+              fontSize: scaled(12),
+              letterSpacing: '0.16em',
+              textTransform: 'uppercase',
+              color: t.muted,
+            }}
+          >
+            Simulador de carreira
+          </div>
+        )}
       </header>
       {children}
     </div>

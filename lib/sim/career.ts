@@ -93,6 +93,14 @@ export type CareerConfig = {
   /** Atributos vindos do draft — sao o **auge**, nao o valor atual. */
   peakAttrs: PlayerAttrs
   careerMode: CareerMode
+  /**
+   * Clube onde a carreira comeca, escolhido na criacao.
+   *
+   * `null` significa sorteio — ver `pickStartingClub`. Guardar o pedido, e nao
+   * so o clube resultante, mantem a carreira reproduzivel a partir da
+   * configuracao: com a mesma seed e o mesmo pedido, a estreia e a mesma.
+   */
+  startClubId: string | null
 }
 
 /** Quem nem entrou na chave da competicao. */
@@ -341,8 +349,15 @@ const BR_START_TIERS = [1, 2]
  *
  * Quem nasce num pais sem liga mapeada estreia em qualquer clube do jogo, com
  * a mesma chance para todos.
+ *
+ * Nada disso acontece quando o jogador escolheu o clube na criacao: ali a
+ * escolha e dele, sem filtro de pais ou divisao. O sorteio e a outra opcao da
+ * mesma pergunta, e nao uma regra que a escolha teria de driblar.
  */
 function pickStartingClub(config: CareerConfig, rng: Rng): Club {
+  const chosen = config.startClubId ? clubById(config.startClubId) : undefined
+  if (chosen) return chosen
+
   const domestic = clubsByCountry(config.nationality)
   if (domestic.length === 0) return pick(rng, CLUBS)
 

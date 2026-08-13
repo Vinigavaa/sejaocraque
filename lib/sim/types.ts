@@ -74,6 +74,15 @@ export type Club = {
   leagueId: string
   /** 1-99. Define nivel de competicao e teto de desempenho. */
   strength: number
+  /**
+   * Poder financeiro do clube, com 1 = o normal da liga dele.
+   *
+   * Separado da forca porque as duas coisas se descolam no futebol de
+   * verdade: o Al-Hilal nao tem o elenco do Real Madrid e mesmo assim paga
+   * mais que ele, e o Galatasaray paga acima do que a Süper Lig sugere.
+   * Multiplica o teto salarial — ver `clubTopSalary`.
+   */
+  money: number
 }
 
 /** Um slot preenchido no draft: de qual lenda veio cada atributo. */

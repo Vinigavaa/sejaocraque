@@ -36,7 +36,7 @@ export function Live({ game }: { game: Game }) {
   // razão de o modo existir.
   const running =
     Boolean(live) &&
-    !live?.pending &&
+    !live?.opportunity &&
     !live?.timing &&
     !live?.kickoff &&
     !live?.halftime &&
@@ -226,7 +226,42 @@ export function Live({ game }: { game: Game }) {
         />
       )}
 
-      {live.pending ? (
+      {live.opportunity && (
+        <div
+          data-motion="event"
+          style={{
+            marginTop: scaled(16),
+            border: `2px solid ${t.accent}`,
+            borderRadius: 8,
+            background: t.card,
+            padding: scaled(16),
+            textAlign: 'center',
+          }}
+        >
+          <SectionLabel>{live.minute}&apos;</SectionLabel>
+          <Display size={26} style={{ marginTop: scaled(6), color: t.accent }}>
+            {live.opportunity.kind === 'finalizacao'
+              ? 'CHANCE DE GOL'
+              : 'CHANCE DE ASSISTÊNCIA'}
+          </Display>
+          <div
+            style={{
+              marginTop: scaled(8),
+              fontSize: scaled(13),
+              lineHeight: 1.45,
+              color: t.mutedStrong,
+            }}
+          >
+            {live.opportunity.prompt}
+          </div>
+
+          <PrimaryButton onClick={game.startTiming} style={{ marginTop: scaled(14) }}>
+            CONTINUAR →
+          </PrimaryButton>
+        </div>
+      )}
+
+      {live.timing && (
         <div
           data-motion="event"
           style={{
@@ -237,80 +272,29 @@ export function Live({ game }: { game: Game }) {
             padding: scaled(16),
           }}
         >
-          <SectionLabel>{live.minute}&apos; · sua decisão</SectionLabel>
+          <TimingBar
+            challenge={live.timing.challenge}
+            label={live.timing.kind === 'finalizacao' ? 'FINALIZAR' : 'PASSAR'}
+            onHit={game.resolveTiming}
+            onExpire={game.expireTiming}
+          />
           <div
             style={{
               marginTop: scaled(8),
-              fontSize: scaled(14),
-              lineHeight: 1.45,
-              fontWeight: 600,
+              fontSize: scaled(11),
+              color: t.mutedStrong,
+              lineHeight: 1.4,
             }}
           >
-            {live.pending.prompt}
+            {live.timing.kind === 'finalizacao'
+              ? 'Acerte a trave para mandar no canto. Quanto mais no meio, melhor a finalização.'
+              : 'Acerte a bola para o passe sair na medida. Quanto mais no meio, melhor o passe.'}
           </div>
-
-          {live.timing ? (
-            <div style={{ marginTop: scaled(14) }}>
-              <TimingBar
-                challenge={live.timing.challenge}
-                label={live.pending.options[live.timing.optionIndex].label}
-                onHit={game.resolveTiming}
-                onExpire={game.expireTiming}
-              />
-              <div
-                style={{
-                  marginTop: scaled(8),
-                  fontSize: scaled(11),
-                  color: t.mutedStrong,
-                  lineHeight: 1.4,
-                }}
-              >
-                {live.timing.challenge.kind === 'finalizacao'
-                  ? 'Acerte a trave para mandar no canto. Quanto mais no meio, melhor a finalização.'
-                  : 'Acerte a bola para o passe sair na medida. Quanto mais no meio, melhor o passe.'}
-              </div>
-            </div>
-          ) : (
-          <div
-            style={{
-              marginTop: scaled(14),
-              display: 'flex',
-              flexDirection: 'column',
-              gap: scaled(8),
-            }}
-          >
-            {live.pending.options.map((option, index) => (
-              <button
-                key={option.label}
-                onClick={() => game.chooseLive(index)}
-                style={{
-                  textAlign: 'left',
-                  background: 'transparent',
-                  border: `2px solid ${t.line}`,
-                  borderRadius: 6,
-                  padding: scaled(12),
-                  color: t.text,
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                <div style={{ fontSize: scaled(14), fontWeight: 800 }}>{option.label}</div>
-                <div
-                  style={{
-                    marginTop: scaled(4),
-                    fontSize: scaled(11),
-                    color: t.mutedStrong,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  {option.detail}
-                </div>
-              </button>
-            ))}
-          </div>
-          )}
         </div>
-      ) : (
+      )}
+
+      {!live.opportunity &&
+        !live.timing &&
         !live.finished &&
         !live.kickoff &&
         !live.halftime && (
@@ -326,12 +310,11 @@ export function Live({ game }: { game: Game }) {
             {live.lastTiming && <TimingFeedback outcome={live.lastTiming} />}
             <div>
               {live.onPitch
-                ? `Foco: ${FOCUS_LABEL[live.focus]}. O jogo para quando algo depender de você.`
+                ? `Foco: ${FOCUS_LABEL[live.focus]}. O jogo para quando a bola for sua.`
                 : 'Você saiu da partida. O resto do jogo corre sem você.'}
             </div>
           </div>
-        )
-      )}
+        )}
 
       <div style={{ flex: 1, minHeight: 16 }} />
 

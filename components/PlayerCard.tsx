@@ -22,8 +22,6 @@ function stars(value: number): string {
  * Tipografico de proposito: `theme.ts` registra que a identidade vem do Anton
  * e do laranja, sem escudo e sem foto. Uma figurinha com imagem exigiria
  * direito de uso e contradiria o aviso de nao-afiliacao da tela inicial.
- *
- * `hero` e peca central de tela; `rail` e a versao do trilho direito.
  */
 export function PlayerCard({
   name,
@@ -32,7 +30,6 @@ export function PlayerCard({
   nationality,
   overall,
   attrs,
-  variant = 'hero',
 }: {
   name: string
   shirtNumber: number
@@ -40,34 +37,31 @@ export function PlayerCard({
   nationality?: string
   overall: number
   attrs: CardAttrs
-  variant?: 'hero' | 'rail'
 }) {
-  const hero = variant === 'hero'
-
   return (
     <div
       style={{
         border: `2px solid ${t.line}`,
         borderRadius: 10,
         background: t.card,
-        padding: scaled(hero ? 24 : 16),
+        padding: scaled(24),
         display: 'flex',
         flexDirection: 'column',
-        gap: scaled(hero ? 18 : 12),
+        gap: scaled(18),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: scaled(14) }}>
-        <Display size={hero ? 76 : 44} style={{ color: t.accent, letterSpacing: '-0.02em' }}>
+        <Display size={76} style={{ color: t.accent, letterSpacing: '-0.02em' }}>
           {shirtNumber}
         </Display>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <Display size={hero ? 30 : 18} style={{ lineHeight: 1.05 }}>
+          <Display size={30} style={{ lineHeight: 1.05 }}>
             {name}
           </Display>
           <div
             style={{
               marginTop: scaled(4),
-              fontSize: scaled(hero ? 12 : 10),
+              fontSize: scaled(12),
               color: t.muted,
               textTransform: 'uppercase',
               letterSpacing: '0.06em',
@@ -76,12 +70,12 @@ export function PlayerCard({
               gap: scaled(6),
             }}
           >
-            <Flag nationality={nationality} size={hero ? 13 : 11} />
+            <Flag nationality={nationality} size={13} />
             {POSITION_LABEL[position]}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <Display size={hero ? 44 : 28}>{overall}</Display>
+          <Display size={44}>{overall}</Display>
           <div
             style={{
               fontSize: scaled(9),
@@ -98,10 +92,10 @@ export function PlayerCard({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: hero ? 'repeat(4, 1fr)' : 'repeat(2, 1fr)',
+          gridTemplateColumns: 'repeat(4, 1fr)',
           gap: scaled(8),
           borderTop: `1px solid ${t.lineSoft}`,
-          paddingTop: scaled(hero ? 16 : 12),
+          paddingTop: scaled(16),
         }}
       >
         {ALL_ATTRS.map((attr) => (
@@ -116,7 +110,7 @@ export function PlayerCard({
             >
               {ATTR_LABEL[attr].short}
             </div>
-            <Display size={isStarAttr(attr) ? (hero ? 14 : 11) : hero ? 24 : 18}>
+            <Display size={isStarAttr(attr) ? 14 : 24}>
               {isStarAttr(attr) ? stars(attrs[attr]) : attrs[attr]}
             </Display>
           </div>

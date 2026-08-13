@@ -9,6 +9,7 @@ import {
   formatSalary,
   MAX_YEARS,
   MIN_YEARS,
+  paysAboveMarket,
   ROLE_LABEL,
   squadRole,
   successChance,
@@ -183,6 +184,13 @@ function Table({
         {asked && (
           <Badge bg={t.goldSoft} color={t.goldText}>
             ★ Você pediu
+          </Badge>
+        )}
+        {/* O salário é o argumento desses clubes, e ele fica na primeira
+            linha do card para ser comparado antes de qualquer outra coisa. */}
+        {!renewal && paysAboveMarket(club) && (
+          <Badge bg={t.greenSoft} color={t.greenText}>
+            Paga acima do mercado
           </Badge>
         )}
       </div>

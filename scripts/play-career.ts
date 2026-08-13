@@ -66,6 +66,7 @@ let state: CareerState = startCareer({
   shirtNumber: 10,
   peakAttrs,
   careerMode: 'classico',
+    startClubId: null,
 })
 
 const first = clubById(state.clubId)!

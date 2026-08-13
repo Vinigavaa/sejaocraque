@@ -77,8 +77,10 @@ button {
   align-items: center;
   gap: calc(16px * var(--ui-scale));
   padding: 0 calc(20px * var(--ui-scale));
-  background: oklch(18% 0.015 55);
-  border-bottom: 2px solid oklch(95% 0.01 70 / 0.12);
+  /* Mesmo fundo do resto da pagina, sem filete: o cabecalho nao e uma faixa
+     separada, e o topo da propria tela. A cor continua opaca porque ele e
+     `sticky` — o conteudo precisa passar por baixo sem aparecer. */
+  background: oklch(15% 0.015 55);
 }
 
 /* O nome do jogador toma a sobra; a marca fica no tamanho dela. */

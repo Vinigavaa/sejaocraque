@@ -278,6 +278,8 @@ function withPlayer(
     name: nation.name,
     leagueId: 'selecao',
     strength: nation.strength,
+    // Seleção não paga salário: só o motor de desempenho olha este objeto.
+    money: 1,
   }
 
   const { goals, assists } = playerOutput(

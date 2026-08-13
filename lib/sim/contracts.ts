@@ -1,5 +1,4 @@
 import { leagueOf } from './data/clubs'
-import { leagueById } from './data/leagues'
 import { clamp } from './positions'
 import type { Rng } from './rng'
 import type { Club } from './types'
@@ -14,7 +13,8 @@ import type { Club } from './types'
  * O modelo tem tres camadas, e vale entender a separacao antes de mexer:
  *
  * 1. **Teto do clube** (`clubTopSalary`) — o que o clube paga ao seu maior
- *    salario. Depende da forca do elenco e da riqueza da liga, e nada mais.
+ *    salario. Depende da forca do elenco, da riqueza da liga e do poder
+ *    financeiro do proprio clube, e nada mais.
  * 2. **Salario justo** (`fairSalary`) — a fatia desse teto que o jogador
  *    merece, pelo que ele e hoje: nivel diante do elenco, idade, potencial,
  *    reputacao e a temporada que acabou de fazer.
@@ -76,12 +76,14 @@ export type ContractInput = {
  * A riqueza da liga entra multiplicando, e nao somando, para que ela nunca
  * inverta a ordem dentro do proprio pais — o segundo clube da Premier League
  * paga mais que o terceiro, e nao mais que o primeiro.
+ *
+ * O poder financeiro do clube (`money`) entra por fora dos dois, e e o unico
+ * fator que **pode** inverter a ordem entre paises: e exatamente isso que faz
+ * um clube saudita cobrir a proposta de um europeu maior que ele. Ver
+ * `FINANCIAL_POWER`, em `data/clubs.ts`.
  */
-export function clubTopSalary(club: Club, leagueId?: string): number {
-  const league = leagueId ? leagueById(leagueId) : undefined
-  const wealth = (league ?? leagueOf(club)).wealth
-
-  return 0.06 * Math.exp((club.strength - 50) * 0.135) * wealth
+export function clubTopSalary(club: Club): number {
+  return 0.06 * Math.exp((club.strength - 50) * 0.135) * leagueOf(club).wealth * club.money
 }
 
 /** Onde o jogador se encaixa no elenco. Vira salario e vira texto na tela. */
@@ -241,6 +243,19 @@ export function successChance(mesa: Negotiation, ask: ContractTerms): number {
 
 /** Como a chance e apresentada. A cor e o texto saem daqui, nao da tela. */
 export type ChanceBand = 'aceita' | 'provavel' | 'limite' | 'arriscada' | 'recusa'
+
+/**
+ * A partir de quanto o clube e anunciado como pagador acima do mercado.
+ *
+ * A tela precisa de um corte, e ele fica alto de proposito: marcar todo mundo
+ * que paga 10% a mais transformaria o aviso em decoracao.
+ */
+const RICH_CLUB = 1.3
+
+/** Se o clube paga claramente acima do que o nivel esportivo dele sugere. */
+export function paysAboveMarket(club: Club): boolean {
+  return club.money >= RICH_CLUB
+}
 
 export function chanceBand(chance: number): ChanceBand {
   if (chance >= 0.95) return 'aceita'

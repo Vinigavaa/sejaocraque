@@ -7,7 +7,7 @@
  */
 export const t = {
   bg: 'oklch(15% 0.015 55)',
-  card: 'oklch(21% 0.015 55)',
+  card: '#181616',
   text: 'oklch(95% 0.01 70)',
   muted: 'oklch(66% 0.015 70)',
   mutedStrong: 'oklch(62% 0.015 70)',

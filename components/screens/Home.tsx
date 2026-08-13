@@ -1,168 +1,115 @@
 import { ScreenLayout } from '../ScreenLayout'
 import { Display, PrimaryButton, scaled, SectionLabel, t } from '../shared'
 
-/** O que a carreira pode virar. Fixo, ilustrativo — vende o espectro do jogo. */
-const EXAMPLES = [
-  {
-    badge: 'JOGADOR COMUM',
-    badgeBg: 'oklch(95% 0.01 70 / 0.08)',
-    badgeColor: t.mutedStrong,
-    ovr: 74,
-    goals: 86,
-    titles: 1,
-    ballon: 0,
-  },
-  {
-    badge: 'CRAQUE',
-    badgeBg: t.goldSoft,
-    badgeColor: t.goldText,
-    ovr: 90,
-    goals: 360,
-    titles: 9,
-    ballon: 1,
-  },
-  {
-    badge: 'O TOPO',
-    badgeBg: t.danger,
-    badgeColor: t.accent,
-    ovr: 99,
-    goals: 720,
-    titles: 24,
-    ballon: 8,
-  },
+/** Os tres numeros que resumem a carreira. Vive no trilho direito no desktop. */
+const FACTS = [
+  { number: '01', text: 'Estreia aos 16, o primeiro contrato profissional.' },
+  { number: '17', text: 'Temporadas até o apito final da carreira.' },
+  { number: '1', text: 'Clique cronometrado decide cada gol.' },
 ]
 
 export function Home({ onPlay }: { onPlay: () => void }) {
   return (
-    <ScreenLayout mobileOrder={['center', 'right']} right={<Examples />}>
-      <SectionLabel style={{ letterSpacing: '0.1em' }}>
-        SIMULADOR DE CARREIRA · 16 — APOSENTADORIA
-      </SectionLabel>
-
-      <Display size={56} style={{ marginTop: scaled(10), lineHeight: 0.92, letterSpacing: '-0.01em' }}>
-        VOCÊ É
-        <br />O CRAQUE?
-      </Display>
-
+    <ScreenLayout mobileOrder={['center', 'right']} right={<Facts />}>
       <div
         style={{
-          marginTop: scaled(16),
-          fontSize: scaled(16),
-          lineHeight: 1.5,
-          color: 'oklch(75% 0.015 70)',
-          maxWidth: '38ch',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          minHeight: 0,
         }}
       >
-        Roube um atributo de cada lenda que aparece no draft. Monte seu jogador do zero. Viva
-        uma carreira inteira e descubra onde você fica entre os maiores.
-      </div>
+        <SectionLabel style={{ color: t.accent, letterSpacing: '0.16em' }}>
+          16 ANOS — APOSENTADORIA · 17 TEMPORADAS
+        </SectionLabel>
 
-      <PrimaryButton onClick={onPlay} style={{ marginTop: scaled(24) }}>
-        JOGAR →
-      </PrimaryButton>
+        <Display
+          size={88}
+          style={{ marginTop: scaled(18), lineHeight: 0.95, letterSpacing: '-0.01em' }}
+        >
+          SEJA O
+          <br />
+          CRAQUE !
+        </Display>
 
-      <div style={{ marginTop: scaled(24), display: 'flex', alignItems: 'center', gap: scaled(8) }}>
-        {['ROLE', 'MONTE', 'VIVA'].map((step, index) => (
-          <div key={step} style={{ display: 'flex', alignItems: 'center', gap: scaled(8) }}>
-            {index > 0 && <div style={{ color: t.faintText }}>→</div>}
-            <Display size={18} style={{ color: t.gold }}>
-              {step}
-            </Display>
-          </div>
-        ))}
-      </div>
+        <p
+          style={{
+            marginTop: scaled(28),
+            marginBottom: 0,
+            fontSize: scaled(17),
+            lineHeight: 1.5,
+            color: 'oklch(80% 0.015 70)',
+            maxWidth: '52ch',
+          }}
+        >
+          Do primeiro contrato à aposentadoria. Você joga, evolui, negocia salário, é convocado
+          — ou não — e envelhece. Sem campo, sem bola na tela: cada temporada se decide em
+          números, manchetes e decisões.
+        </p>
 
-      <div style={{ marginTop: scaled(6), fontSize: scaled(12), color: t.muted }}>
-        Role uma lenda por rodada, monte seu jogador roubando atributos, viva a carreira
-        temporada a temporada.
+        <PrimaryButton
+          onClick={onPlay}
+          style={{
+            marginTop: scaled(28),
+            alignSelf: 'flex-start',
+            fontFamily: 'var(--font-anton), Anton, sans-serif',
+            fontWeight: 400,
+            fontSize: scaled(22),
+            letterSpacing: '0.04em',
+            color: t.bg,
+            borderRadius: 0,
+            padding: `${scaled(14)} ${scaled(48)}`,
+          }}
+        >
+          JOGAR
+        </PrimaryButton>
       </div>
 
       <div
         style={{
           marginTop: scaled(32),
-          fontSize: scaled(11),
-          color: 'oklch(60% 0.015 70)',
-          lineHeight: 1.5,
+          paddingTop: scaled(18),
           borderTop: `1px solid ${t.lineSoft}`,
-          paddingTop: scaled(16),
+          fontSize: scaled(11),
+          letterSpacing: '0.14em',
+          textTransform: 'uppercase',
+          color: 'oklch(56% 0.015 70)',
         }}
       >
-        CRAQUE não possui afiliação com nenhuma liga, clube ou jogador. Nomes citados a título
-        de referência histórica.
+        SEJAOCRAQUE.COM — sem afiliação com liga, clube ou jogador
       </div>
     </ScreenLayout>
   )
 }
 
-/** Vitrine do espectro do jogo. No desktop vive no trilho direito. */
-function Examples() {
+/** Os tres numeros do design, separados por filete. */
+function Facts() {
   return (
-    <>
-      <SectionLabel>O que você pode virar</SectionLabel>
-
-      <div style={{ marginTop: scaled(12), display: 'flex', flexDirection: 'column', gap: scaled(10) }}>
-        {EXAMPLES.map((example) => (
-          <div
-            key={example.badge}
-            style={{
-              border: `2px solid ${t.lineSoft}`,
-              borderRadius: 8,
-              padding: scaled(16),
-              background: t.card,
-            }}
-          >
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: scaled(28),
+        minHeight: '100%',
+      }}
+    >
+      {FACTS.map((fact, index) => (
+        <div key={fact.number}>
+          {index > 0 && (
             <div
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <div
-                style={{
-                  fontSize: scaled(11),
-                  fontWeight: 800,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  background: example.badgeBg,
-                  color: example.badgeColor,
-                  padding: `${scaled(4)} ${scaled(10)}`,
-                  borderRadius: 999,
-                }}
-              >
-                {example.badge}
-              </div>
-              <Display size={32}>{example.ovr}</Display>
-            </div>
-
-            <div
-              style={{
-                marginTop: scaled(10),
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: scaled(8),
-              }}
-            >
-              {[
-                { value: example.goals, label: 'gols' },
-                { value: example.titles, label: 'títulos' },
-                { value: example.ballon, label: 'bolas de ouro' },
-              ].map((item) => (
-                <div key={item.label}>
-                  <Display size={20}>{item.value}</Display>
-                  <div
-                    style={{
-                      fontSize: scaled(10),
-                      color: t.muted,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    {item.label}
-                  </div>
-                </div>
-              ))}
-            </div>
+              style={{ borderTop: `1px solid ${t.lineSoft}`, marginBottom: scaled(28) }}
+            />
+          )}
+          <Display size={40} style={{ color: t.accent }}>
+            {fact.number}
+          </Display>
+          <div style={{ marginTop: scaled(8), fontSize: scaled(14), color: t.muted }}>
+            {fact.text}
           </div>
-        ))}
-      </div>
-
-    </>
+        </div>
+      ))}
+    </div>
   )
 }

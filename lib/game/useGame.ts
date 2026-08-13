@@ -38,7 +38,6 @@ import {
 import {
   advanceLiveMatch,
   buildTimeline,
-  chooseLiveOption,
   finishLiveMatch,
   kickOffLiveMatch,
   missLiveTiming,
@@ -48,6 +47,7 @@ import {
   setLiveFocus,
   simulateRestOfMatch,
   startLiveMatch,
+  startLiveTiming,
   type LiveMatchState,
 } from '@/lib/sim/liveMatch'
 import type { MatchFocus } from '@/lib/sim/liveFocus'
@@ -79,6 +79,15 @@ import {
   type NewsContext,
   type NewsItem,
 } from './news'
+import {
+  socialFromFarewell,
+  socialFromMatch,
+  socialFromOffer,
+  socialFromRenewal,
+  socialFromSeason,
+  socialFromTransfer,
+  type SocialPost,
+} from './social'
 
 export type Screen =
   | 'home'
@@ -121,6 +130,16 @@ type Pending = {
 /** O feed guarda uma temporada inteira de acontecimentos, e não mais que isso. */
 const MAX_NEWS = 40
 
+/**
+ * Trava de seguranca do feed social durante a temporada.
+ *
+ * O feed inteiro e substituido a cada fechamento de temporada (ver
+ * `closeSeason`) — isso e o que garante que a rede social nunca mistura duas
+ * temporadas. Este teto so existe para o caminho raro de uma temporada Jogo a
+ * Jogo muito longa, onde `pushSocial` vai empilhando post a post ate la.
+ */
+const MAX_SOCIAL = 80
+
 export function useGame() {
   const [screen, setScreen] = useState<Screen>('home')
 
@@ -131,6 +150,10 @@ export function useGame() {
   const [shirtNumber, setShirtNumber] = useState<number | null>(null)
   const [mode, setMode] = useState<DraftMode | null>(null)
   const [careerMode, setCareerMode] = useState<CareerMode | null>(null)
+  // Clube inicial: `null` é o sorteio, e é o padrão. A escolha só existe aqui,
+  // na criação — depois de o contrato estar assinado, quem move o jogador de
+  // clube é o mercado.
+  const [startClubId, setStartClubId] = useState<string | null>(null)
 
   // — draft
   const [draft, setDraft] = useState<DraftState | null>(null)
@@ -179,6 +202,13 @@ export function useGame() {
    */
   const [matchFocus, setMatchFocus] = useState<MatchFocus>('equilibrado')
   const [news, setNews] = useState<NewsItem[]>([])
+
+  /**
+   * A rede social da carreira — sempre a temporada em curso, nunca a soma de
+   * todas. `closeSeason` substitui esta lista inteira pelo resumo da
+   * temporada nova; `pushSocial` so acrescenta o que acontece dentro dela.
+   */
+  const [social, setSocial] = useState<SocialPost[]>([])
 
   /**
    * As partidas da liga que acabou de ser fechada, rodada a rodada.
@@ -282,10 +312,11 @@ export function useGame() {
         // O modo e escolhido na criacao e nao muda mais: ele decide como cada
         // temporada e apurada, e trocar no meio misturaria duas apuracoes.
         careerMode: careerMode ?? 'classico',
+        startClubId,
       }),
     )
     setScreen('club')
-  }, [peakAttrs, finalPosition, nationality, shirtNumber, draft, name, careerMode])
+  }, [peakAttrs, finalPosition, nationality, shirtNumber, draft, name, careerMode, startClubId])
 
   const beginCareer = useCallback(() => {
     setAgentHint(career?.config.careerMode === 'classico')
@@ -354,6 +385,11 @@ export function useGame() {
     setNews((current) => [...items, ...current].slice(0, MAX_NEWS))
   }, [])
 
+  const pushSocial = useCallback((items: SocialPost[]) => {
+    if (items.length === 0) return
+    setSocial((current) => [...items, ...current].slice(0, MAX_SOCIAL))
+  }, [])
+
   /**
    * Fecha a temporada.
    *
@@ -385,6 +421,22 @@ export function useGame() {
           createRng(`${career.config.seed}:imprensa:${record.label}`),
         ),
       )
+
+      // A rede social troca de temporada aqui: o resumo do ano que fechou vira
+      // a semente da timeline nova, e o que rolou durante a temporada anterior
+      // (gols, lesões, sequências) some — exatamente o que o pedido original
+      // exige.
+      const socialContext = { ...newsContext(career), season: record.label }
+      const socialRng = createRng(`${career.config.seed}:social:${record.label}`)
+      const previousRecord = career.seasons[career.seasons.length - 1] ?? null
+
+      setSocial([
+        ...socialFromSeason(socialContext, result.state, record, previousRecord, socialRng),
+        ...result.state.offers.flatMap((offer) =>
+          socialFromOffer(socialContext, offer.clubId, offer.terms, socialRng),
+        ),
+      ])
+
       setMatchday(null)
       setSeasonLog(log ?? [])
       setTrainingFocus(null)
@@ -615,10 +667,11 @@ export function useGame() {
     setLive((state) => (state ? advanceLiveMatch(state, rng) : state))
   }, [])
 
-  const chooseLive = useCallback((index: number) => {
+  /** O "continuar" do aviso: a barra abre. */
+  const startTiming = useCallback(() => {
     const rng = matchRng.current
     if (!rng) return
-    setLive((state) => (state ? chooseLiveOption(state, index, rng) : state))
+    setLive((state) => (state ? startLiveTiming(state, rng) : state))
   }, [])
 
   /**
@@ -712,6 +765,15 @@ export function useGame() {
       ),
     )
 
+    pushSocial(
+      socialFromMatch(
+        newsContext(updated),
+        season.log,
+        career.seasons.length > 0 || season.log.slice(0, -1).some((entry) => entry.player.played),
+        createRng(`${career.config.seed}:social:${career.seasonIndex}:${roundIndex}`),
+      ),
+    )
+
     if (isSeasonOver(season)) {
       const { outcome, stats } = finishMatchdaySeason(season, league)
       closeSeason({ outcome, stats, morale }, season.log)
@@ -719,7 +781,7 @@ export function useGame() {
     }
 
     setScreen('career')
-  }, [career, live, matchday, roundRng, pushNews, newsContext, closeSeason])
+  }, [career, live, matchday, roundRng, pushNews, pushSocial, newsContext, closeSeason])
 
   /** Fim da narração do jogo decisivo. */
   const finishMatch = useCallback(() => {
@@ -852,11 +914,17 @@ export function useGame() {
             createRng(`${career.config.seed}:mercado:${career.seasonIndex}`),
           ),
         ])
+
+        const socialRng = createRng(`${career.config.seed}:socialmercado:${career.seasonIndex}`)
+        pushSocial([
+          ...socialFromFarewell(newsContext(career), socialRng),
+          ...socialFromTransfer(newsContext(career), club.name, socialRng),
+        ])
       }
 
       setScreen('career')
     },
-    [career, newsContext, pushNews],
+    [career, newsContext, pushNews, pushSocial],
   )
 
   /** Renova com o clube atual nos termos que estão na mesa. */
@@ -864,8 +932,14 @@ export function useGame() {
     if (!career?.renewal) return
 
     setCareer(renewContract(career, career.renewal))
+    pushSocial(
+      socialFromRenewal(
+        newsContext(career),
+        createRng(`${career.config.seed}:socialrenovacao:${career.seasonIndex}`),
+      ),
+    )
     setScreen('career')
-  }, [career])
+  }, [career, newsContext, pushSocial])
 
   /**
    * Fecha a janela sem assinar. Com contrato em vigor é só recusar o mercado;
@@ -951,6 +1025,7 @@ export function useGame() {
     setShirtNumber(null)
     setMode(null)
     setCareerMode(null)
+    setStartClubId(null)
     setDraft(null)
     setFinalPosition(null)
     setCareer(null)
@@ -964,6 +1039,7 @@ export function useGame() {
     setMatchday(null)
     setLive(null)
     setNews([])
+    setSocial([])
     setSeasonLog([])
     matchRng.current = null
   }, [])
@@ -984,6 +1060,8 @@ export function useGame() {
     setMode,
     careerMode,
     setCareerMode,
+    startClubId,
+    setStartClubId,
     canStartDraft,
     beginDraft,
 
@@ -1007,6 +1085,7 @@ export function useGame() {
     setTrainingFocus,
     advance,
     news,
+    social,
     matchday,
     live,
     nextMatch,
@@ -1014,7 +1093,7 @@ export function useGame() {
     playNextMatch,
     skipSeason,
     advanceLive,
-    chooseLive,
+    startTiming,
     resolveTiming,
     expireTiming,
     matchFocus,

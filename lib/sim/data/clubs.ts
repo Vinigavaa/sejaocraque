@@ -467,11 +467,62 @@ const ROWS: Row[] = [
   ['al-hazem', 'Al-Hazem', 'sa-1', 63],
 ]
 
+/**
+ * Clubes que pagam fora do padrao da propria liga.
+ *
+ * O numero multiplica o teto salarial do clube — 1,8 significa "paga quase o
+ * dobro do que a forca do elenco e a riqueza da liga sozinhas indicariam".
+ * Quem nao esta na lista vale 1, que e a esmagadora maioria: a lista existe
+ * para marcar a excecao, e nao para dar uma nota financeira a cada clube.
+ *
+ * O caso que motivou isto e o mercado saudita, onde o salario deixou de
+ * acompanhar o nivel esportivo: um clube saudita de elenco 79 disputa um
+ * jogador com um europeu de elenco 85 no unico terreno em que ele ganha, que
+ * e a folha. A Turquia faz o mesmo em escala menor, e so com os clubes de
+ * Istambul. Os europeus da lista sobem pouco: la o dinheiro ja esta em boa
+ * parte dentro da forca do elenco e da riqueza da liga.
+ *
+ * Nem todo clube dessas ligas paga alto de proposito — Al-Hazem e Kasımpaşa
+ * ficam de fora, porque "liga rica" nao pode virar "todo mundo la e rico".
+ */
+const FINANCIAL_POWER: Record<string, number> = {
+  // Arábia Saudita — os quatro do projeto estatal, e depois o segundo escalão.
+  'al-hilal': 2.6,
+  'al-nassr': 2.5,
+  'al-ittihad': 2.4,
+  'al-ahli': 2.3,
+  'al-qadsiah': 1.7,
+  neom: 1.7,
+  'al-ettifaq': 1.5,
+  'al-shabab': 1.35,
+  'al-taawoun': 1.2,
+
+  // Turquia — os de Istambul, que contratam acima do que a liga sustenta.
+  galatasaray: 1.8,
+  fenerbahce: 1.7,
+  besiktas: 1.4,
+  trabzonspor: 1.15,
+
+  // MLS — a regra do jogador franquia paga um salário fora da tabela.
+  'inter-miami': 1.5,
+  lafc: 1.25,
+  galaxy: 1.2,
+
+  // Europa — sobem pouco: o dinheiro deles já está na força do elenco.
+  psg: 1.3,
+  'man-city': 1.25,
+  'man-united': 1.2,
+  'real-madrid': 1.2,
+  barcelona: 1.1,
+  bayern: 1.15,
+}
+
 export const CLUBS: Club[] = ROWS.map(([id, name, leagueId, strength]) => ({
   id,
   name,
   leagueId,
   strength,
+  money: FINANCIAL_POWER[id] ?? 1,
 }))
 
 export function clubById(id: string): Club | undefined {

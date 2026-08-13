@@ -137,6 +137,7 @@ for (let index = 0; index < CAREERS; index++) {
     shirtNumber: 9,
     peakAttrs: attrsFor(80),
     careerMode: 'jogoAJogo' as const,
+    startClubId: null,
   }
 
   // A mesma seed nos dois modos: o clube de estreia e a liga sao identicos, e
