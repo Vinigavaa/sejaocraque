@@ -97,7 +97,7 @@ function playMatchdaySeason(state: CareerState) {
     // o botao "simular o resto" faz na interface.
     const done = finishLiveMatch(
       simulateRestOfMatch(
-        startLiveMatch(setup, morale, 'equilibrado', matchRng),
+        startLiveMatch(setup, morale, matchRng),
         matchRng,
       ),
     )
