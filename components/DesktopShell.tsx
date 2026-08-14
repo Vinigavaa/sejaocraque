@@ -1,5 +1,8 @@
+'use client'
+
 import type { ReactNode } from 'react'
 
+import { useAuth } from '@/lib/firebase/AuthProvider'
 import type { Game } from '@/lib/game/useGame'
 import { clubById } from '@/lib/sim/data/clubs'
 import { POSITION_LABEL } from '@/lib/sim/types'
@@ -35,8 +38,11 @@ export function DesktopShell({ game, children }: { game: Game; children: ReactNo
         ) : (
           <div
             style={{
-              // A regra do `globals.css` da `flex:1` ao ultimo filho: sem o
-              // alinhamento a direita a assinatura ficaria colada na marca.
+              // O botao de conta e o ultimo filho agora, entao a regra de
+              // `flex:1` do `globals.css` nao alcanca mais esta faixa: o
+              // crescimento passa a ser declarado aqui.
+              flex: 1,
+              minWidth: 0,
               marginLeft: 'auto',
               textAlign: 'right',
               fontSize: scaled(12),
@@ -48,9 +54,47 @@ export function DesktopShell({ game, children }: { game: Game; children: ReactNo
             Simulador de carreira
           </div>
         )}
+        <AccountButton onClick={game.openSaves} active={game.screen === 'saves'} />
       </header>
       {children}
     </div>
+  )
+}
+
+/**
+ * A porta da conta, presente em toda tela.
+ *
+ * É um botão só porque salvar, carregar e entrar são o mesmo assunto: quem
+ * clica aqui quer resolver a carreira na nuvem, e a tela de contas apresenta
+ * o que faz sentido no momento — o login, ou as três vagas.
+ */
+function AccountButton({ onClick, active }: { onClick: () => void; active: boolean }) {
+  const { user, loading } = useAuth()
+
+  return (
+    <button
+      onClick={onClick}
+      // O cabecalho da `flex:1` ao ultimo filho, e o botao nao quer a sobra.
+      style={{
+        flex: '0 0 auto',
+        background: 'transparent',
+        border: `1px solid ${active ? t.accent : t.line}`,
+        color: active ? t.accent : t.text,
+        borderRadius: 999,
+        padding: `${scaled(7)} ${scaled(14)}`,
+        fontSize: scaled(11),
+        fontWeight: 800,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        cursor: 'pointer',
+        maxWidth: scaled(180),
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {loading ? '…' : user ? (user.displayName ?? 'Minha conta') : 'Entrar'}
+    </button>
   )
 }
 
@@ -67,6 +111,9 @@ function PlayerLine({ game }: { game: Game }) {
         alignItems: 'baseline',
         gap: scaled(12),
         flexWrap: 'wrap',
+        // Toma a sobra do cabecalho: com o botao de conta depois dela, a
+        // identificacao deixou de ser o ultimo filho que o CSS estica.
+        flex: 1,
         minWidth: 0,
       }}
     >

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Anton, Inter } from 'next/font/google'
 
+import { AuthProvider } from '@/lib/firebase/AuthProvider'
 import { SITE, siteUrl } from '@/lib/ui/site'
 import { t } from '@/lib/ui/theme'
 // Bandeiras em SVG local: emoji de bandeira nao renderiza no Windows.
@@ -98,7 +99,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             }),
           }}
         />
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   )

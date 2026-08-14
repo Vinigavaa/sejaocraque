@@ -62,6 +62,7 @@ import { overallByPosition, overallFor } from '@/lib/sim/positions'
 import { applyTraining, currentOverall } from '@/lib/sim/progression'
 import { createRng, randomSeed, type Rng } from '@/lib/sim/rng'
 import { averageStrength, type LeagueOutcome } from '@/lib/sim/season'
+import { SNAPSHOT_VERSION, type CareerSnapshot, type SaveSlot } from '@/lib/saves/types'
 import {
   attemptNegotiation,
   negotiation,
@@ -100,6 +101,7 @@ export type Screen =
   | 'history'
   | 'agent'
   | 'market'
+  | 'saves'
 
 export type Overlay = { type: 'award'; award: Award }
 
@@ -233,10 +235,19 @@ export function useGame() {
     [peakAttrs],
   )
 
-  const peakOverall = useMemo(
-    () => (peakAttrs && finalPosition ? overallFor(peakAttrs, finalPosition) : 0),
-    [peakAttrs, finalPosition],
-  )
+  /**
+   * O overall de auge do jogador.
+   *
+   * Sai do draft enquanto ele está na tela; depois que a carreira existe, sai
+   * dela. Os dois caminhos dão o mesmo número — a diferença é que uma carreira
+   * carregada da nuvem nunca passou pelo draft, e sem esta segunda fonte o fim
+   * de carreira dela mostraria overall zero.
+   */
+  const peakOverall = useMemo(() => {
+    const attrs = peakAttrs ?? career?.peakAttrs
+    const position = finalPosition ?? career?.config.position
+    return attrs && position ? overallFor(attrs, position) : 0
+  }, [peakAttrs, finalPosition, career])
 
   const liveOverall = useMemo(() => {
     if (!career || !finalPosition) return peakOverall
@@ -959,6 +970,86 @@ export function useGame() {
 
   const closeHistory = useCallback(() => setScreen(historyOrigin), [historyOrigin])
 
+  /**
+   * Se a carreira em curso pode ir para a nuvem.
+   *
+   * Só o Jogo a Jogo é salvo: é o modo em que a carreira para no meio, entre
+   * uma rodada e a seguinte. No Clássico uma temporada corre inteira em um
+   * clique, e não existe um "de onde parou" para retomar. Carreira encerrada
+   * também não entra — não há o que continuar.
+   */
+  const canSave = !!career && !career.retired && career.config.careerMode === 'jogoAJogo'
+
+  /**
+   * A carreira congelada para gravação.
+   *
+   * Só entra o que não dá para recalcular. O sorteio da partida em curso fica
+   * de fora de propósito: uma partida aberta não é salva, e retomar sempre
+   * começa na tela de carreira, com a próxima rodada por jogar.
+   */
+  const snapshot = useCallback((): CareerSnapshot | null => {
+    if (!career || !canSave) return null
+
+    return {
+      version: SNAPSHOT_VERSION,
+      career,
+      matchday,
+      news,
+      social,
+      seasonLog,
+    }
+  }, [career, canSave, matchday, news, social, seasonLog])
+
+  /**
+   * A vaga da nuvem a que esta carreira está amarrada, ou `null` quando ela
+   * ainda não foi para lugar nenhum.
+   *
+   * Amarrar salvar e carregar à mesma vaga é o que permite gravar sozinho a
+   * cada partida: sem isso o jogo não saberia em qual das três escrever, e o
+   * progresso dependeria de o jogador lembrar de salvar entre as rodadas.
+   */
+  const [slot, setSlot] = useState<SaveSlot | null>(null)
+
+  /** Retoma uma carreira vinda da nuvem, exatamente onde ela parou. */
+  const restore = useCallback((saved: CareerSnapshot, from: SaveSlot) => {
+    // A partida aberta e a fila de overlays são de outra sessão: começar a
+    // carreira retomada com um prêmio na tela seria mostrar de novo algo que o
+    // jogador já viu antes de salvar.
+    setLive(null)
+    setOverlayQueue([])
+    setPending(null)
+    setLastRecord(null)
+    setLastTable(null)
+    setNegotiated({})
+    setTrainingFocus(null)
+    setAgentHint(false)
+    matchRng.current = null
+
+    setCareer(saved.career)
+    setFinalPosition(saved.career.config.position)
+    setMatchday(saved.matchday)
+    setNews(saved.news ?? [])
+    setSocial(saved.social ?? [])
+    setSeasonLog(saved.seasonLog ?? [])
+    setHistoryOrigin('career')
+    setSlot(from)
+    setScreen('career')
+  }, [])
+
+  /**
+   * De onde a tela de contas foi aberta. Ela é um desvio como o histórico:
+   * fechá-la precisa devolver o jogador para onde ele estava, e não para uma
+   * tela fixa.
+   */
+  const [savesOrigin, setSavesOrigin] = useState<Screen>('home')
+
+  const openSaves = useCallback(() => {
+    setSavesOrigin((current) => (screen === 'saves' ? current : screen))
+    setScreen('saves')
+  }, [screen])
+
+  const closeSaves = useCallback(() => setScreen(savesOrigin), [savesOrigin])
+
   const openAgent = useCallback(() => {
     setAgentHint(false)
     setScreen('agent')
@@ -1002,6 +1093,8 @@ export function useGame() {
     setTrainingFocus(null)
     setPending(null)
     setHistoryOrigin('career')
+    setSavesOrigin('home')
+    setSlot(null)
     setAgentHint(false)
     setMatchday(null)
     setLive(null)
@@ -1072,6 +1165,14 @@ export function useGame() {
     skipToEnd,
     openHistory,
     closeHistory,
+
+    canSave,
+    snapshot,
+    restore,
+    slot,
+    setSlot,
+    openSaves,
+    closeSaves,
 
 
     openAgent,

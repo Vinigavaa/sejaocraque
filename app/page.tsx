@@ -15,12 +15,17 @@ import { Live } from '@/components/screens/Live'
 import { Market } from '@/components/screens/Market'
 import { LiveMatch } from '@/components/screens/LiveMatch'
 import { Reveal } from '@/components/screens/Reveal'
+import { Saves } from '@/components/screens/Saves'
 import { SeasonReview } from '@/components/screens/SeasonReview'
 import { useGame } from '@/lib/game/useGame'
+import { useAutosave } from '@/lib/saves/useAutosave'
 import { t } from '@/lib/ui/theme'
 
 export default function Page() {
   const game = useGame()
+
+  // Depois que a carreira tem vaga na nuvem, o progresso vai sozinho para lá.
+  useAutosave(game)
 
   return (
     <main style={{ minHeight: '100dvh', background: t.bg, color: t.text }}>
@@ -39,6 +44,7 @@ export default function Page() {
           {game.screen === 'history' && <History game={game} />}
           {game.screen === 'agent' && <Agent game={game} />}
           {game.screen === 'market' && <Market game={game} />}
+          {game.screen === 'saves' && <Saves game={game} />}
         </ScreenTransition>
       </DesktopShell>
 
