@@ -7,6 +7,7 @@
  * vezes ele troca de clube numa carreira, quanto tempo fica em cada um, e se
  * as propostas respeitam os destinos pedidos ao empresario.
  */
+import { leagueOfClub } from '../lib/sim/world'
 import { clubById } from '../lib/sim/data/clubs'
 import { leagueOf } from '../lib/sim/data/clubs'
 import {
@@ -122,7 +123,8 @@ function runCareer(
 
     for (const offer of state.offers) {
       const club = clubById(offer.clubId)
-      if (club && !matchesPreference(club, preferences)) sample.offSpec++
+      const league = club ? leagueOfClub(state.world, club.id) : undefined
+      if (club && league && !matchesPreference(club, preferences, league)) sample.offSpec++
     }
 
     // Aceita a melhor proposta que nao rebaixe o jogador de nivel — o mesmo

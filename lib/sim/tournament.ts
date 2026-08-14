@@ -20,10 +20,10 @@ import {
 import { jitter, sample, type Rng } from './rng'
 import { boostedStrength, simulateMatch, type ClubBoost } from './season'
 
-const GROUP_SIZE = 4
+export const GROUP_SIZE = 4
 
 /** Quantos avancam de cada grupo. Dois, para a contagem cair em potencia de dois. */
-const QUALIFIERS_PER_GROUP = 2
+export const QUALIFIERS_PER_GROUP = 2
 
 export const GROUP_STAGE = 'Fase de grupos'
 
@@ -110,7 +110,7 @@ function playGroup<T extends Contender>(
     group.map((one) => [one.id, { contender: one, points: 0, goalsFor: 0, goalsAgainst: 0 }]),
   )
 
-  ROUNDS.forEach((round, index) => {
+  GROUP_ROUNDS.forEach((round, index) => {
     const stage = `Grupo ${name} · ${index + 1}ª rodada`
 
     for (const [homeIndex, awayIndex] of round) {
@@ -149,7 +149,7 @@ function playGroup<T extends Contender>(
 }
 
 /** As tres rodadas de um grupo de quatro, por indice. */
-const ROUNDS: [number, number][][] = [
+export const GROUP_ROUNDS: [number, number][][] = [
   [
     [0, 1],
     [2, 3],
@@ -183,6 +183,6 @@ function compareRows<T>(a: GroupRow<T>, b: GroupRow<T>): number {
   return b.goalsFor - a.goalsFor
 }
 
-function groupName(index: number): string {
+export function groupName(index: number): string {
   return String.fromCharCode(65 + index)
 }

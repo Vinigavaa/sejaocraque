@@ -1,4 +1,4 @@
-import { CLUBS, clubsInLeague, leagueOf } from './data/clubs'
+import { CLUBS, leagueOf } from './data/clubs'
 import { LEAGUES } from './data/leagues'
 import {
   NATIONS,
@@ -53,7 +53,36 @@ export function finalIn(result: KnockoutResult, id: string): KnockoutMatch | nul
   return result.paths.get(id)?.find((match) => match.stage === FINAL_STAGE) ?? null
 }
 
-const FINAL_STAGE = 'Final'
+export const FINAL_STAGE = 'Final'
+
+/** O placar de uma final, pelo lado do time de quem se pergunta. */
+export type FinalScore = {
+  opponentId: string
+  opponentName: string
+  forGoals: number
+  againstGoals: number
+  onPenalties: boolean
+}
+
+/**
+ * Uma campanha de mata-mata dentro de uma temporada, ja fechada.
+ *
+ * E o formato que o resumo, a escada e o historico entendem — e o unico
+ * ponto em que a copa simulada de uma vez (modo Classico) e a copa disputada
+ * partida a partida (modo Jogo a Jogo) precisam se parecer.
+ */
+export type CompetitionRun = {
+  id: string
+  name: string
+  matches: number
+  /** Fase em que o clube caiu, ou "Campeao". */
+  reached: string
+  won: boolean
+  goals: number
+  assists: number
+  /** Preenchido so quando o clube do jogador chegou a final. */
+  final: FinalScore | null
+}
 
 /**
  * Minimo que o mata-mata precisa saber. Clube e selecao entram pela mesma
@@ -62,7 +91,7 @@ const FINAL_STAGE = 'Final'
 export type Contender = { id: string; strength: number }
 
 /** Nome da fase pelo numero de clubes ainda vivos. */
-function roundName(remaining: number): string {
+export function roundName(remaining: number): string {
   switch (remaining) {
     case 2:
       return FINAL_STAGE
@@ -166,7 +195,7 @@ function playTie<T extends Contender>(
   }
 }
 
-function largestPowerOfTwo(count: number): number {
+export function largestPowerOfTwo(count: number): number {
   return 2 ** Math.floor(Math.log2(Math.max(2, count)))
 }
 
@@ -320,60 +349,6 @@ export function continentalByPosition(
 export function continentalForCupWinner(country: string): Continental | undefined {
   const competitions = continentalsFor(country)
   return competitions[1] ?? competitions[0]
-}
-
-/**
- * Quem disputa a competicao continental.
- *
- * Os classificados sao os clubes de cada primeira divisao cuja forca os coloca
- * na faixa de colocacao da competicao — aproximacao suficiente, ja que o jogo
- * nao guarda a tabela do ano anterior de todas as ligas. O clube do jogador
- * entra pela colocacao real dele, que e a unica que o jogo de fato simulou.
- */
-export function continentalEntrants(
-  competition: Continental,
-  playerClub?: Club,
-): Club[] {
-  const [from, to] = competition.positions
-  const entrants: Club[] = []
-
-  for (const country of competition.countries) {
-    const topLeague = LEAGUES.find(
-      (league) => league.country === country && league.tier === 1,
-    )
-    if (!topLeague) continue
-
-    const ranked = [...clubsInLeague(topLeague.id)].sort(
-      (a, b) => b.strength - a.strength,
-    )
-
-    entrants.push(...ranked.slice(from - 1, to))
-  }
-
-  if (playerClub && !entrants.some((club) => club.id === playerClub.id)) {
-    entrants.push(playerClub)
-  }
-
-  return entrants
-}
-
-/**
- * A vaga que o clube teria pela forca dele na propria liga.
- *
- * Serve para os momentos em que o jogo nao simulou a temporada anterior do
- * clube: o comeco da carreira e a transferencia. A vaga e do clube, nao do
- * jogador — quem sai do campeao europeu para um clube de meio de tabela perde
- * a Champions junto com a camisa.
- */
-export function continentalSpotOfClub(club: Club, leagueId: string): string | null {
-  const league = LEAGUES.find((item) => item.id === leagueId)
-  if (!league || league.tier !== 1) return null
-
-  const ranked = [...clubsInLeague(league.id)].sort((a, b) => b.strength - a.strength)
-  const position = ranked.findIndex((other) => other.id === club.id) + 1
-  if (position === 0) return null
-
-  return continentalByPosition(league.country, position)?.id ?? null
 }
 
 // ── Selecao e Copa do Mundo ──────────────────────────────────────────

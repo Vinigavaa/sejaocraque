@@ -1,4 +1,4 @@
-import { leagueOf } from './data/clubs'
+import type { League } from './data/leagues'
 import { clamp } from './positions'
 import type { Rng } from './rng'
 import type { Club } from './types'
@@ -63,6 +63,11 @@ export type ContractInput = {
   /** Titulos, premios e convocacoes acumulados, na mesma escala do mercado. */
   reputation: number
   club: Club
+  /**
+   * A divisao que o clube esta disputando **hoje**, que nem sempre e a dos
+   * dados: um clube que subiu paga o salario da divisao nova.
+   */
+  league: League
   form: { matches: number; rating: number } | null
 }
 
@@ -82,8 +87,8 @@ export type ContractInput = {
  * um clube saudita cobrir a proposta de um europeu maior que ele. Ver
  * `FINANCIAL_POWER`, em `data/clubs.ts`.
  */
-export function clubTopSalary(club: Club): number {
-  return 0.06 * Math.exp((club.strength - 50) * 0.135) * leagueOf(club).wealth * club.money
+export function clubTopSalary(club: Club, league: League): number {
+  return 0.06 * Math.exp((club.strength - 50) * 0.135) * league.wealth * club.money
 }
 
 /** Onde o jogador se encaixa no elenco. Vira salario e vira texto na tela. */
@@ -116,7 +121,7 @@ export function squadRole(overall: number, club: Club): SquadRole {
 export function fairSalary(input: ContractInput): number {
   const { overall, potential, age, reputation, club } = input
 
-  const top = clubTopSalary(club)
+  const top = clubTopSalary(club, input.league)
 
   // Importancia: quanto o jogador rende acima do que o elenco pede.
   const share = clamp(0.12 + (overall - club.strength + 5) / 16, 0.08, 1)
@@ -200,7 +205,7 @@ export function negotiation(
   // Serie B.
   const ceiling = Math.min(
     fair * (1.15 + room * 0.5),
-    clubTopSalary(input.club) * 1.1,
+    clubTopSalary(input.club, input.league) * 1.1,
   )
 
   return {

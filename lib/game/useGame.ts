@@ -4,10 +4,10 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 
 import type { Award } from '@/lib/sim/awards'
 import {
+  clubCompetitions,
   closeMarket,
   contractInputAt,
   dropOffer,
-  fieldOf,
   playSeason,
   renewContract,
   resolveTransfer,
@@ -23,6 +23,7 @@ import {
   type SeasonRecord,
 } from '@/lib/sim/career'
 import { clubById } from '@/lib/sim/data/clubs'
+import { clubsInDivision } from '@/lib/sim/world'
 import { leagueById, type League } from '@/lib/sim/data/leagues'
 import { LEGENDS } from '@/lib/sim/data/legends'
 import {
@@ -49,7 +50,7 @@ import {
   type LiveMatchState,
 } from '@/lib/sim/liveMatch'
 import {
-  completeRound,
+  completeDate,
   finishMatchdaySeason,
   isSeasonOver,
   nextFixture,
@@ -440,13 +441,14 @@ export function useGame() {
       setTrainingFocus(null)
       setPending({ stage: 'pre', post, retired: result.state.retired })
 
-      // No modo Jogo a Jogo a última rodada já foi disputada pelo jogador —
-      // reexibi-la como "o jogo que decidiu a temporada" seria mostrar de novo
-      // o que ele acabou de jogar. Final de copa continua valendo: essas o
-      // motor resolve fora do calendário da liga.
+      // No modo Jogo a Jogo o jogador disputou tudo que o clube disputou —
+      // liga, copa e continental. Reexibir qualquer uma dessas como "o jogo que
+      // decidiu a temporada" seria mostrar de novo o que ele acabou de jogar.
+      // A final de seleção continua valendo: essa o motor resolve sozinho, e
+      // `teamClubId` nulo é justamente o que a identifica.
       const worthWatching =
         record.decisive &&
-        (career.config.careerMode === 'classico' || record.decisive.stage === 'Final')
+        (career.config.careerMode === 'classico' || record.decisive.teamClubId === null)
 
       if (worthWatching) {
         setScreen('match')
@@ -460,10 +462,16 @@ export function useGame() {
 
   const advance = useCallback(() => closeSeason(), [closeSeason])
 
-  /** O sorteio da rodada: o mesmo para a partida do jogador e para as outras. */
-  const roundRng = useCallback(
-    (state: CareerState, roundIndex: number): Rng =>
-      createRng(`${state.config.seed}:rodada:${state.seasonIndex}:${roundIndex}`),
+  /**
+   * O sorteio da data: o mesmo para a partida do jogador e para as outras.
+   *
+   * A chave é o índice da **data**, e não o da rodada de liga: com copa e
+   * continental no calendário, duas datas diferentes cairiam na mesma semente
+   * e a rodada de Champions repetiria os placares da rodada de liga.
+   */
+  const dateRng = useCallback(
+    (state: CareerState, dateIndex: number): Rng =>
+      createRng(`${state.config.seed}:data:${state.seasonIndex}:${dateIndex}`),
     [],
   )
 
@@ -488,7 +496,7 @@ export function useGame() {
       const league = leagueById(state.leagueId)
       if (!club || !league) return null
 
-      const clubs = fieldOf(league, club)
+      const clubs = clubsInDivision(state.world, league.id)
 
       let season =
         matchday ??
@@ -498,15 +506,16 @@ export function useGame() {
           clubId: club.id,
           seed: state.config.seed,
           seasonIndex: state.seasonIndex,
+          competitions: clubCompetitions(state, league),
         })
 
       while (!isSeasonOver(season) && !nextFixture(season)) {
-        season = completeRound(season, null, roundRng(state, season.roundIndex))
+        season = completeDate(season, null, dateRng(state, season.dateIndex))
       }
 
       return { club, league, clubs, season }
     },
-    [matchday, roundRng],
+    [matchday, dateRng],
   )
 
   /** O que o jogador precisa saber antes de decidir jogar mais uma rodada. */
@@ -522,7 +531,8 @@ export function useGame() {
     return {
       opponentId: next.opponentId,
       opponentName: clubById(next.opponentId)?.name ?? 'adversário',
-      competition: open.league.name,
+      competition: next.competitionName,
+      stage: next.stage,
       atHome: next.atHome,
       round: next.round,
       totalRounds: open.season.rounds.length,
@@ -551,24 +561,18 @@ export function useGame() {
     const { club, league, clubs, season } = open
 
     if (isSeasonOver(season)) {
-      const { outcome, stats } = finishMatchdaySeason(season, league)
+      const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
       setMatchday(season)
-      closeSeason({ outcome, stats, morale: career.morale }, season.log)
+      closeSeason({ outcome, stats, cups, winners, morale: career.morale }, season.log)
       return
     }
 
-    const setup = setupForNext(
-      season,
-      playerForMatch(career),
-      club,
-      league.name,
-      averageStrength(clubs),
-    )
+    const setup = setupForNext(season, playerForMatch(career), club, averageStrength(clubs))
 
     if (!setup) return
 
     matchRng.current = createRng(
-      `${career.config.seed}:partida:${career.seasonIndex}:${season.roundIndex}`,
+      `${career.config.seed}:partida:${career.seasonIndex}:${season.dateIndex}`,
     )
 
     setMatchday(season)
@@ -602,44 +606,44 @@ export function useGame() {
     let items: NewsItem[] = []
 
     while (!isSeasonOver(season)) {
-      const roundIndex = season.roundIndex
-      const setup = setupForNext(season, player, club, league.name, average)
+      const dateIndex = season.dateIndex
+      const setup = setupForNext(season, player, club, average)
 
       // Rodada de folga: corre sozinha, sem partida do jogador.
       if (!setup) {
-        season = completeRound(season, null, roundRng(career, roundIndex))
+        season = completeDate(season, null, dateRng(career, dateIndex))
         continue
       }
 
       const rng = createRng(
-        `${career.config.seed}:partida:${career.seasonIndex}:${roundIndex}`,
+        `${career.config.seed}:partida:${career.seasonIndex}:${dateIndex}`,
       )
       const done = finishLiveMatch(
         simulateRestOfMatch(startLiveMatch(setup, morale, rng), rng),
       )
 
       morale = moraleAfterMatch(done)
-      season = completeRound(
+      season = completeDate(
         season,
         {
           teamGoals: done.teamGoals,
           opponentGoals: done.opponentGoals,
           player: done.player,
         },
-        roundRng(career, roundIndex),
+        dateRng(career, dateIndex),
       )
 
       items = [
         ...newsFromMatch(
           newsContext({ ...career, morale }),
           season.log,
-          createRng(`${career.config.seed}:imprensa:${career.seasonIndex}:${roundIndex}`),
+          createRng(`${career.config.seed}:imprensa:${career.seasonIndex}:${dateIndex}`),
         ),
         ...items,
       ]
     }
 
-    const { outcome, stats } = finishMatchdaySeason(season, league)
+    const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
 
     setCareer({ ...career, morale })
     setMatchday(season)
@@ -647,12 +651,12 @@ export function useGame() {
     // De uma vez só: são dezenas de rodadas, e empilhar uma notícia por vez
     // faria o feed nascer cortado pelo teto na ponta errada.
     pushNews(items)
-    closeSeason({ outcome, stats, morale }, season.log)
+    closeSeason({ outcome, stats, cups, winners, morale }, season.log)
   }, [
     career,
     openMatchdaySeason,
     playerForMatch,
-    roundRng,
+    dateRng,
     newsContext,
     pushNews,
     closeSeason,
@@ -716,16 +720,16 @@ export function useGame() {
     const league = leagueById(career.leagueId)
     if (!league) return
 
-    const roundIndex = matchday.roundIndex
+    const dateIndex = matchday.dateIndex
 
-    const season = completeRound(
+    const season = completeDate(
       matchday,
       {
         teamGoals: done.teamGoals,
         opponentGoals: done.opponentGoals,
         player: done.player,
       },
-      roundRng(career, roundIndex),
+      dateRng(career, dateIndex),
     )
 
     const morale = moraleAfterMatch(done)
@@ -739,7 +743,7 @@ export function useGame() {
       newsFromMatch(
         newsContext(updated),
         season.log,
-        createRng(`${career.config.seed}:imprensa:${career.seasonIndex}:${roundIndex}`),
+        createRng(`${career.config.seed}:imprensa:${career.seasonIndex}:${dateIndex}`),
       ),
     )
 
@@ -748,18 +752,18 @@ export function useGame() {
         newsContext(updated),
         season.log,
         career.seasons.length > 0 || season.log.slice(0, -1).some((entry) => entry.player.played),
-        createRng(`${career.config.seed}:social:${career.seasonIndex}:${roundIndex}`),
+        createRng(`${career.config.seed}:social:${career.seasonIndex}:${dateIndex}`),
       ),
     )
 
     if (isSeasonOver(season)) {
-      const { outcome, stats } = finishMatchdaySeason(season, league)
-      closeSeason({ outcome, stats, morale }, season.log)
+      const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
+      closeSeason({ outcome, stats, cups, winners, morale }, season.log)
       return
     }
 
     setScreen('career')
-  }, [career, live, matchday, roundRng, pushNews, pushSocial, newsContext, closeSeason])
+  }, [career, live, matchday, dateRng, pushNews, pushSocial, newsContext, closeSeason])
 
   /** Fim da narração do jogo decisivo. */
   const finishMatch = useCallback(() => {

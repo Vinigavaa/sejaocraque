@@ -119,7 +119,9 @@ export function newsFromMatch(
   } else if (player.played && player.goals === 2) {
     out.push(
       item(context, reach, entry.round, rng, {
-        headline: `Dois gols de ${context.playerName} no ${context.leagueName}`,
+        // A competição sai da própria partida: com copa e continental no
+        // calendário, o nome da liga estaria errado em boa parte dos jogos.
+        headline: `Dois gols de ${context.playerName} no ${entry.competitionName}`,
         body: `${context.clubName} ${won ? 'venceu' : lost ? 'perdeu' : 'empatou'} por ${entry.teamGoals} a ${entry.opponentGoals}.`,
       }),
     )

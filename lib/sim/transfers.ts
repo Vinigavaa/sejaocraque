@@ -1,8 +1,9 @@
 import { CLUBS, leagueOf } from './data/clubs'
-import { COUNTRY_LABEL, LEAGUES } from './data/leagues'
+import { COUNTRY_LABEL, LEAGUES, type League } from './data/leagues'
 import { desiredYears, fairSalary, type ContractTerms } from './contracts'
 import { sample, type Rng } from './rng'
 import type { PlayerSeasonStats } from './season'
+import { leagueOfClub, type WorldState } from './world'
 import type { Club } from './types'
 
 /**
@@ -77,10 +78,13 @@ export const FAREWELL_AGE = 31
 const FAREWELL_FLOOR = 12
 
 /** Se o clube atende a um dos destinos pedidos. */
-export function matchesPreference(club: Club, preferences: TransferPreferences): boolean {
+export function matchesPreference(
+  club: Club,
+  preferences: TransferPreferences,
+  league: League,
+): boolean {
   if (preferences.length === 0) return true
 
-  const league = leagueOf(club)
   return preferences.some((entry) => entry === league.id || entry === league.country)
 }
 
@@ -96,6 +100,8 @@ export type MarketInput = {
   progress: number
   /** Titulos, Bolas de Ouro e convocacoes acumulados. */
   reputation: number
+  /** O mundo, para saber em que divisao cada clube de destino esta hoje. */
+  world: WorldState
   promoted: boolean
   relegated: boolean
   /** Temporadas completas no clube atual. */
@@ -202,7 +208,7 @@ function survivalOffers(
 
   // O destino pedido continua valendo enquanto houver alguem la. So quando
   // nao ha e que o empresario aceita qualquer porta aberta.
-  const preferred = targets.filter((club) => matchesPreference(club, preferences))
+  const preferred = targets.filter((club) => matchesPreference(club, preferences, leagueOfClub(input.world, club.id) ?? leagueOf(club)))
 
   return pickOffers(input, rng, preferred.length > 0 ? preferred : targets, 2)
 }
@@ -271,7 +277,7 @@ function marketOffers(
   const targets = candidates(input, interest)
   if (targets.length === 0) return []
 
-  const preferred = targets.filter((club) => matchesPreference(club, preferences))
+  const preferred = targets.filter((club) => matchesPreference(club, preferences, leagueOfClub(input.world, club.id) ?? leagueOf(club)))
   const hasPreferences = preferences.length > 0
 
   // Duas propostas por janela: uma escolha so nao e escolha, e comparar duas
@@ -358,6 +364,7 @@ export function contractInputFor(input: MarketInput, club: Club) {
     age: input.age,
     reputation: input.reputation,
     club,
+    league: leagueOfClub(input.world, club.id) ?? leagueOf(club),
     form: { matches: input.stats.matches, rating: input.stats.rating },
   }
 }

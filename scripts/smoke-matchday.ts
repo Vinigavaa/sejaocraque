@@ -12,8 +12,14 @@
  * O que se espera ver: producao e nota parecidas entre os dois modos, moral
  * andando nos dois sentidos, e nenhuma partida terminando com placar absurdo.
  */
-import { fieldOf, playSeason, startCareer, type CareerState } from '../lib/sim/career'
+import {
+  clubCompetitions,
+  playSeason,
+  startCareer,
+  type CareerState,
+} from '../lib/sim/career'
 import { clubById } from '../lib/sim/data/clubs'
+import { clubsInDivision } from '../lib/sim/world'
 import { leagueById } from '../lib/sim/data/leagues'
 import {
   finishLiveMatch,
@@ -22,7 +28,7 @@ import {
   moraleAfterMatch,
 } from '../lib/sim/liveMatch'
 import {
-  completeRound,
+  completeDate,
   finishMatchdaySeason,
   isSeasonOver,
   nextFixture,
@@ -53,7 +59,7 @@ function attrsFor(peak: number): PlayerAttrs {
 function playMatchdaySeason(state: CareerState) {
   const club = clubById(state.clubId)!
   const league = leagueById(state.leagueId)!
-  const clubs = fieldOf(league, club)
+  const clubs = clubsInDivision(state.world, league.id)
 
   let season = startMatchdaySeason({
     league,
@@ -61,18 +67,19 @@ function playMatchdaySeason(state: CareerState) {
     clubId: club.id,
     seed: state.config.seed,
     seasonIndex: state.seasonIndex,
+    competitions: clubCompetitions(state, league),
   })
 
   let morale = state.morale
   let biggest = 0
 
   while (!isSeasonOver(season)) {
-    const roundRng = createRng(
-      `${state.config.seed}:rodada:${state.seasonIndex}:${season.roundIndex}`,
+    const dateRng = createRng(
+      `${state.config.seed}:data:${state.seasonIndex}:${season.dateIndex}`,
     )
 
     if (!nextFixture(season)) {
-      season = completeRound(season, null, roundRng)
+      season = completeDate(season, null, dateRng)
       continue
     }
 
@@ -85,12 +92,11 @@ function playMatchdaySeason(state: CareerState) {
         attrs: state.peakAttrs,
       },
       club,
-      league.name,
       averageStrength(clubs),
     )!
 
     const matchRng = createRng(
-      `${state.config.seed}:partida:${state.seasonIndex}:${season.roundIndex}`,
+      `${state.config.seed}:partida:${state.seasonIndex}:${season.dateIndex}`,
     )
 
     // Sem ninguem para decidir, o motor joga seguro — que e exatamente o que
@@ -105,19 +111,19 @@ function playMatchdaySeason(state: CareerState) {
     morale = moraleAfterMatch(done)
     biggest = Math.max(biggest, done.teamGoals + done.opponentGoals)
 
-    season = completeRound(
+    season = completeDate(
       season,
       {
         teamGoals: done.teamGoals,
         opponentGoals: done.opponentGoals,
         player: done.player,
       },
-      roundRng,
+      dateRng,
     )
   }
 
-  const { outcome, stats } = finishMatchdaySeason(season, league)
-  return { outcome, stats, morale, biggest }
+  const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
+  return { outcome, stats, cups, winners, morale, biggest }
 }
 
 const totals = {
@@ -154,6 +160,8 @@ for (let index = 0; index < CAREERS; index++) {
   const live = playSeason(base, null, {
     outcome: played.outcome,
     stats: played.stats,
+    cups: played.cups,
+    winners: played.winners,
     morale: played.morale,
   })
 

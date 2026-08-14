@@ -11,6 +11,7 @@ import {
   reputationLabel,
   type MoraleKey,
 } from '@/lib/sim/morale'
+import { campaignStatus } from '@/lib/sim/campaign'
 import { statsFromLog } from '@/lib/sim/matchday'
 import { finalizeLeague } from '@/lib/sim/season'
 import { ALL_ATTRS, ATTR_LABEL, type Attr } from '@/lib/sim/types'
@@ -55,13 +56,48 @@ export function Career({ game }: { game: Game }) {
       ? statsFromLog(game.matchday.log)
       : null
 
+  // Copa e continental em andamento. Fora do Jogo a Jogo elas só existem no
+  // resumo de fim de temporada — não há "agora" para mostrar.
+  const campaigns = jogoAJogo && game.matchday ? game.matchday.campaigns : []
+
   const shown = running ?? record?.stats ?? null
   const lastYear = career.contract.seasonsLeft <= 1
 
   return (
     <ScreenLayout
       mobileOrder={['center', 'left', 'right']}
-      left={<>        {table && (
+      left={<>        {campaigns.length > 0 && (
+          <section style={{ marginBottom: scaled(16) }}>
+            <SectionLabel>Outras competições</SectionLabel>
+            <div
+              style={{
+                marginTop: scaled(8),
+                border: `1px solid ${t.lineSoft}`,
+                borderRadius: 6,
+              }}
+            >
+              {campaigns.map((campaign) => (
+                <div
+                  key={campaign.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: scaled(8),
+                    padding: `${scaled(6)} ${scaled(10)}`,
+                    fontSize: scaled(11),
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>{campaign.name}</div>
+                  <div style={{ color: t.mutedStrong, textAlign: 'right' }}>
+                    {campaignStatus(campaign)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {table && (
           <section>
             <SectionLabel>Tabela da liga</SectionLabel>
             <div
@@ -466,7 +502,10 @@ function NextMatch({ game }: { game: Game }) {
         </Badge>
       </div>
       <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.mutedStrong }}>
-        {next.competition} · {next.round}ª rodada de {next.totalRounds} · {next.season}
+        {/* Rodada de liga tem número; jogo de copa tem fase. */}
+        {next.competition} ·{' '}
+        {next.round !== null ? `${next.round}ª rodada de ${next.totalRounds}` : next.stage} ·{' '}
+        {next.season}
       </div>
     </div>
   )

@@ -20,6 +20,7 @@ import {
 import { clubById } from '@/lib/sim/data/clubs'
 import { leagueById } from '@/lib/sim/data/leagues'
 import { matchesPreference } from '@/lib/sim/transfers'
+import { leagueOfClub } from '@/lib/sim/world'
 
 import { ClubCrest } from '../Crest'
 import { ScreenLayout } from '../ScreenLayout'
@@ -157,7 +158,14 @@ function Table({
   // destino escolhido, o jogador precisa ver que foi por isso.
   const farewell = career.farewellLeagueId
   const preferences = farewell ? [farewell] : career.preferences
-  const asked = !renewal && preferences.length > 0 && matchesPreference(club, preferences)
+  // A divisão vem do mundo, e não dos dados: um clube que subiu conta como
+  // clube da divisão nova no pedido feito ao empresário.
+  const clubLeague = leagueOfClub(career.world, club.id)
+  const asked =
+    !renewal &&
+    preferences.length > 0 &&
+    clubLeague !== undefined &&
+    matchesPreference(club, preferences, clubLeague)
 
   return (
     <div

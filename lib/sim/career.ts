@@ -1,20 +1,29 @@
-import { CLUBS, clubById, clubsByCountry, clubsInLeague, leagueOf } from './data/clubs'
+import { CLUBS, clubById, clubsByCountry, leagueOf } from './data/clubs'
 import {
   competitionImageId,
   continentalById,
-  continentalByPosition,
-  continentalEntrants,
-  continentalForCupWinner,
-  continentalSpotOfClub,
   continentalsFor,
   finalIn,
   matchesIn,
   nationalCupEntrants,
   nationalCupName,
   simulateKnockout,
-  type Continental,
+  type CompetitionRun,
+  type FinalScore,
   type KnockoutResult,
 } from './competitions'
+import { NOT_ENTERED } from './campaign'
+import {
+  advanceWorld,
+  clubsInDivision,
+  continentalOf,
+  cupKey,
+  divisionOf,
+  qualifiedFor,
+  startWorld,
+  type WorldState,
+} from './world'
+import type { SeasonCompetition } from './matchday'
 import { resolveAwards, type Award, type AwardsInput } from './awards'
 import { nationById } from './data/nations'
 import {
@@ -24,7 +33,7 @@ import {
   wonWorldCup,
   type NationalSeason,
 } from './national'
-import { leagueAbove, leagueBelow, leagueById, type League } from './data/leagues'
+import { leagueById, type League } from './data/leagues'
 import { clubLift } from './impact'
 import {
   applyMorale,
@@ -66,6 +75,8 @@ import { ALL_ATTRS, type Attr, type Club, type PlayerAttrs, type Position } from
 
 export const FIRST_SEASON = 2026
 
+export type { CompetitionRun, FinalScore }
+
 /**
  * Como a carreira e jogada.
  *
@@ -101,32 +112,6 @@ export type CareerConfig = {
    * configuracao: com a mesma seed e o mesmo pedido, a estreia e a mesma.
    */
   startClubId: string | null
-}
-
-/** Quem nem entrou na chave da competicao. */
-const NOT_ENTERED = 'Não entrou na chave'
-
-/** O placar de uma final, pelo lado do time do jogador. */
-export type FinalScore = {
-  opponentId: string
-  opponentName: string
-  forGoals: number
-  againstGoals: number
-  onPenalties: boolean
-}
-
-/** Uma campanha de mata-mata dentro de uma temporada. */
-export type CompetitionRun = {
-  id: string
-  name: string
-  matches: number
-  /** Fase em que o clube caiu, ou "Campeao". */
-  reached: string
-  won: boolean
-  goals: number
-  assists: number
-  /** Preenchido so quando o clube do jogador chegou a final. */
-  final: FinalScore | null
 }
 
 /**
@@ -261,10 +246,20 @@ export type CareerState = {
    * move ao fim de cada temporada; no Jogo a Jogo, a cada partida.
    */
   morale: Morale
+  /**
+   * O mundo em volta da carreira: em que divisao cada clube esta e que
+   * competicao continental cada um conquistou.
+   *
+   * Fica no estado, e nao nos dados, porque e a unica parte do jogo que muda
+   * de temporada para temporada sem o jogador ter feito nada — e sem ela o
+   * Brasileirao de 2035 seria exatamente o de 2026.
+   */
+  world: WorldState
 }
 
 export function startCareer(config: CareerConfig): CareerState {
   const rng = careerRng(config.seed, 'inicio')
+  const world = startWorld()
   const club = pickStartingClub(config, rng)
   const league = leagueOf(club)
 
@@ -277,6 +272,7 @@ export function startCareer(config: CareerConfig): CareerState {
     age: START_AGE,
     reputation: 0,
     club,
+    league,
     form: null,
   })
 
@@ -300,10 +296,11 @@ export function startCareer(config: CareerConfig): CareerState {
     renewal: null,
     earnings: 0,
     retiredFree: false,
-    continentalId: continentalSpotOfClub(club, league.id),
+    continentalId: continentalOf(world, club.id),
     preferences: [],
     farewellLeagueId: null,
     morale: STARTING_MORALE,
+    world,
   }
 }
 
@@ -391,6 +388,14 @@ export type PlayedLeague = {
   outcome: LeagueOutcome
   /** Moral acumulada partida a partida ao longo da liga. */
   morale: Morale
+  /**
+   * Copa nacional e continental ja disputadas partida a partida. Quando vem
+   * preenchido, `playCups` nao roda: as campanhas do jogador ja aconteceram, e
+   * simula-las de novo trocaria o que ele acabou de jogar por outro resultado.
+   */
+  cups?: CompetitionRun[]
+  /** Campeao de cada competicao que o jogador disputou, para o mundo. */
+  winners?: Record<string, string>
 }
 
 /**
@@ -412,7 +417,7 @@ export function playSeason(
   const rng = careerRng(state.config.seed, `temporada:${state.seasonIndex}`)
   const club = requireClub(state.clubId)
   const league = requireLeague(state.leagueId)
-  const clubs = fieldOf(league, club)
+  const clubs = clubsInDivision(state.world, league.id)
 
   const overall = currentOverall(state.peakAttrs, state.config.position, state.age)
   const totalMatches = matchesInLeague(clubs.length)
@@ -447,21 +452,40 @@ export function playSeason(
   const promoted = leagueOutcome.promotedIds.includes(club.id)
   const relegated = leagueOutcome.relegatedIds.includes(club.id)
 
-  const cups = playCups(
-    {
-      overall,
-      position: state.config.position,
-      club,
-      country: league.country,
-      leagueAverage: averageStrength(clubs),
-      // O jogador entra nas copas na mesma proporcao em que jogou a liga:
-      // quem e reserva no campeonato tambem e reserva na copa.
-      participation,
-      // A vaga foi conquistada na temporada anterior. Vale so se o clube
-      // segue na divisao e no pais que a garantiram.
-      continentalId: continentalPlayedThisSeason(state.continentalId, league),
-    },
-    rng,
+  // No Jogo a Jogo as copas ja foram disputadas partida a partida; no
+  // Classico elas sao simuladas aqui. Nos dois casos o resultado alimenta o
+  // resumo da temporada e o mundo pela mesma porta.
+  const played = playedLeague?.cups
+    ? { runs: playedLeague.cups, winners: playedLeague.winners ?? {} }
+    : playCups(
+        {
+          overall,
+          position: state.config.position,
+          club,
+          country: league.country,
+          leagueAverage: averageStrength(clubs),
+          // O jogador entra nas copas na mesma proporcao em que jogou a liga:
+          // quem e reserva no campeonato tambem e reserva na copa.
+          participation,
+          // A vaga foi conquistada na temporada anterior. Vale so se o clube
+          // segue na divisao e no pais que a garantiram.
+          continentalId: continentalPlayedThisSeason(state.continentalId, league),
+          world: state.world,
+        },
+        rng,
+      )
+
+  const cups = played.runs
+
+  // O mundo roda depois da temporada do jogador e em volta dela: a liga e as
+  // copas dele entram ja disputadas, e todas as outras — dezenove ligas, treze
+  // copas nacionais e as continentais — sao resolvidas aqui. E daqui que saem
+  // os acessos, os rebaixamentos e a classificacao continental de **todos** os
+  // clubes, inclusive nas temporadas em que o jogador nem estava no pais.
+  const { world } = advanceWorld(
+    state.world,
+    careerRng(state.config.seed, `mundo:${state.seasonIndex}`),
+    { league: leagueOutcome, winners: worldWinners(played.winners, league.country) },
   )
 
   const peakAttrs = trainingFocus
@@ -570,6 +594,9 @@ export function playSeason(
     age,
     reputation,
     club,
+    // A divisao da temporada que **vem**: quem subiu ja negocia como clube de
+    // primeira divisao, e quem caiu ja negocia como clube de segunda.
+    league: requireLeague(divisionOf(world, club.id)),
     form: { matches: stats.matches, rating: stats.rating },
   }
 
@@ -592,9 +619,13 @@ export function playSeason(
       // Ferias e pre-temporada desfazem parte do que ficou — para os dois
       // lados. Sem isso um comeco ruim aos 17 marcaria a carreira inteira.
       morale: driftBetweenSeasons(morale),
+      world,
       // O clube nunca muda aqui. Trocar de time e decisao do jogador, e a
       // unica porta para isso e `resolveTransfer`.
-      leagueId: leagueAfterSeason(league, promoted, relegated).id,
+      //
+      // A divisao, sim: o jogador sobe e desce **junto com o clube**, e quem
+      // decidiu isso foi a tabela que acabou de fechar no mundo.
+      leagueId: divisionOf(world, club.id),
       offers: buildOffers(
         {
           overall: nextOverall,
@@ -604,6 +635,7 @@ export function playSeason(
           stats,
           progress: nextOverall - overall,
           reputation,
+          world,
           promoted,
           relegated,
           seasonsAtClub: seasonsAtClub(state, club.id),
@@ -613,12 +645,7 @@ export function playSeason(
         needsClub,
         rng,
       ),
-      continentalId: earnedContinentalSpot(
-        league,
-        leagueAfterSeason(league, promoted, relegated),
-        tablePosition,
-        cups,
-      ),
+      continentalId: continentalOf(world, club.id),
     },
     record,
     leagueOutcome,
@@ -741,6 +768,7 @@ export function contractInputAt(state: CareerState, club: Club): ContractInput {
     age: state.age,
     reputation: reputationOf(state) + state.morale.reputation / 8,
     club,
+    league: requireLeague(divisionOf(state.world, club.id)),
     form: last ? { matches: last.stats.matches, rating: last.stats.rating } : null,
   }
 }
@@ -840,14 +868,13 @@ export function resolveTransfer(state: CareerState, clubId: string | null): Care
   // A vaga continental tambem fica para tras. Ela e do clube que a conquistou:
   // quem sai de um semifinalista da Champions para um clube de meio de tabela
   // passa a disputar o que o clube novo disputa.
-  const target = requireClub(clubId)
-  const league = leagueOf(target)
+  requireClub(clubId)
 
   return {
     ...state,
     clubId,
-    leagueId: league.id,
-    continentalId: continentalSpotOfClub(target, league.id),
+    leagueId: divisionOf(state.world, clubId),
+    continentalId: continentalOf(state.world, clubId),
     offers: [],
     renewal: null,
     contract: {
@@ -862,47 +889,6 @@ export function resolveTransfer(state: CareerState, clubId: string | null): Care
 /** Duas casas — a precisao com que salario e ganhos aparecem na tela. */
 function round2(value: number): number {
   return Math.round(value * 100) / 100
-}
-
-/**
- * O jogador sobe e desce **junto com o clube**, sem trocar de time.
- *
- * A versao anterior nao conseguia fazer isso: como `Club.leagueId` e estatico,
- * ela representava o acesso trocando o jogador por outro clube da divisao de
- * destino. Sair de um clube passa a ser sempre escolha do jogador.
- */
-function leagueAfterSeason(
-  league: League,
-  promoted: boolean,
-  relegated: boolean,
-): League {
-  if (!promoted && !relegated) return league
-
-  return (promoted ? leagueAbove(league) : leagueBelow(league)) ?? league
-}
-
-/**
- * O campo da temporada.
- *
- * Depois de um acesso o clube do jogador nao consta da divisao nova nos dados
- * estaticos — ele entra aqui, no lugar do mais fraco, para a tabela nao crescer
- * de tamanho a cada promocao.
- *
- * O clube continua listado na divisao de origem nos dados. Nao incomoda: o jogo
- * so simula a liga do jogador, e a copa nacional reune o pais inteiro de
- * qualquer forma.
- */
-export function fieldOf(league: League, club: Club): Club[] {
-  const clubs = clubsInLeague(league.id)
-
-  if (clubs.some((other) => other.id === club.id)) return clubs
-
-  const weakest = clubs.reduce(
-    (worst, other) => (other.strength < worst.strength ? other : worst),
-    clubs[0],
-  )
-
-  return [club, ...clubs.filter((other) => other.id !== weakest?.id)]
 }
 
 /**
@@ -962,11 +948,13 @@ function playCups(
     leagueAverage: number
     participation: number
     continentalId: string | null
+    world: WorldState
   },
   rng: Rng,
-): CompetitionRun[] {
+): { runs: CompetitionRun[]; winners: Record<string, string> } {
   const { club, country, participation, continentalId } = input
   const runs: CompetitionRun[] = []
+  const winners: Record<string, string> = {}
 
   const boost = {
     clubId: club.id,
@@ -975,6 +963,8 @@ function playCups(
 
   const cup = simulateKnockout(nationalCupEntrants(country), rng, boost)
   const cupRun = toRun(nationalCupName(country), 'copa', cup, input, participation, rng)
+
+  winners.copa = cup.winnerId
 
   // A chave so aceita potencia de dois, entao parte dos clubes fica de fora.
   // Quem nao entrou nao disputou a competicao — registrar isso como campanha
@@ -987,16 +977,65 @@ function playCups(
     // Continental de clube tem fase de grupos; copa nacional nao. E o formato
     // real de cada uma.
     const outcome = simulateGroupTournament(
-      continentalEntrants(continental, club),
+      qualifiedFor(input.world, continental.id),
       rng,
       boost,
     )
     const run = toRun(continental.name, continental.id, outcome, input, participation, rng)
 
+    winners[continental.id] = outcome.winnerId
+
     if (run.reached !== NOT_ENTERED) runs.push(run)
   }
 
-  return runs
+  return { runs, winners }
+}
+
+/**
+ * Traduz os campeoes das competicoes do jogador para as chaves que o mundo
+ * usa. So a copa nacional precisa de traducao: a campanha do jogador a chama
+ * de `'copa'`, e o mundo indexa uma por pais.
+ */
+function worldWinners(
+  winners: Record<string, string>,
+  country: string,
+): Record<string, string> {
+  const { copa, ...rest } = winners
+
+  return copa ? { ...rest, [cupKey(country)]: copa } : rest
+}
+
+/**
+ * As competicoes de mata-mata que o clube disputa nesta temporada.
+ *
+ * E a lista que o modo Jogo a Jogo transforma em datas do calendario. A regra
+ * de quem entra em que competicao mora aqui, uma vez so: a copa nacional
+ * reune o pais inteiro e a continental sai da vaga que o clube conquistou na
+ * temporada passada.
+ */
+export function clubCompetitions(state: CareerState, league: League): SeasonCompetition[] {
+  const competitions: SeasonCompetition[] = [
+    {
+      id: 'copa',
+      name: nationalCupName(league.country),
+      entrants: nationalCupEntrants(league.country),
+      withGroups: false,
+    },
+  ]
+
+  const continentalId = continentalPlayedThisSeason(state.continentalId, league)
+  const continental = continentalId ? continentalById(continentalId) : undefined
+
+  if (continental) {
+    competitions.push({
+      id: continental.id,
+      name: continental.name,
+      entrants: qualifiedFor(state.world, continental.id),
+      withGroups: true,
+    })
+  }
+
+  return competitions
 }
 
 function toRun(
@@ -1058,52 +1097,6 @@ function finalScoreFor(
     againstGoals: final.againstGoals,
     onPenalties: final.onPenalties,
   }
-}
-
-/**
- * A vaga continental do ano seguinte, ou `null` quando o clube nao conquistou
- * nenhuma.
- *
- * Tres caminhos legitimos, como no futebol de verdade:
- *
- * - colocacao na primeira divisao, dentro da faixa da competicao;
- * - titulo da copa nacional, que da a segunda competicao do continente;
- * - titulo continental, que garante a principal no ano seguinte.
- *
- * Vale o melhor deles. E nada disso classifica quem nao vai estar na primeira
- * divisao do pais na temporada que vem: colocacao em segunda divisao nao entra
- * em faixa nenhuma, e quem caiu perde a vaga que tinha conquistado.
- */
-function earnedContinentalSpot(
-  playedLeague: League,
-  nextLeague: League,
-  tablePosition: number,
-  cups: CompetitionRun[],
-): string | null {
-  if (playedLeague.tier !== 1 || nextLeague.tier !== 1) return null
-
-  const { country } = playedLeague
-  const ranking = continentalsFor(country)
-  if (ranking.length === 0) return null
-
-  const earned: Continental[] = []
-
-  const byPosition = continentalByPosition(country, tablePosition)
-  if (byPosition) earned.push(byPosition)
-
-  if (cups.some((run) => run.id === 'copa' && run.won)) {
-    const byCup = continentalForCupWinner(country)
-    if (byCup) earned.push(byCup)
-  }
-
-  if (cups.some((run) => run.id !== 'copa' && run.won)) earned.push(ranking[0])
-
-  if (earned.length === 0) return null
-
-  // A ordem de `continentalsFor` vai da competicao maior para a menor.
-  return earned.reduce((best, item) =>
-    ranking.indexOf(item) < ranking.indexOf(best) ? item : best,
-  ).id
 }
 
 /**

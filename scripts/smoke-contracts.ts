@@ -61,7 +61,7 @@ for (const id of ['real-madrid', 'manchester-city', 'flamengo', 'al-hilal', 'por
   const league = leagueById(club.leagueId)
   console.log(
     `  ${club.name.padEnd(18)} ${String(club.strength).padStart(2)}  ${(league?.name ?? '').padEnd(22)}` +
-      ` teto ${formatSalary(clubTopSalary(club))}`,
+      ` teto ${formatSalary(clubTopSalary(club, league!))}`,
   )
 }
 
@@ -78,6 +78,7 @@ for (const id of ['real-madrid', 'flamengo', 'al-hilal', 'sport']) {
       age: 25,
       reputation: 4,
       club,
+      league: leagueById(club.leagueId)!,
       form: { matches: 30, rating: 7.1 },
     }
     console.log(
@@ -98,6 +99,7 @@ for (const id of ['real-madrid', 'flamengo', 'sport']) {
     age: 26,
     reputation: 6,
     club,
+    league: leagueById(club.leagueId)!,
     form: { matches: 32, rating: 7.4 },
   }
   const offer = { salary: fairSalary(input), years: 3 }
