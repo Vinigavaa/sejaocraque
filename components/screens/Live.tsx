@@ -3,10 +3,11 @@
 import { useEffect } from 'react'
 
 import type { Game } from '@/lib/game/useGame'
-import { MATCH_MINUTES } from '@/lib/sim/liveMatch'
+import { MATCH_MINUTES, type MatchSide } from '@/lib/sim/liveMatch'
 import type { TimingOutcome } from '@/lib/sim/liveTiming'
 
 import { ClubCrest } from '../Crest'
+import { Flag } from '../Flag'
 import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
 import { Display, GhostButton, PrimaryButton, scaled, SectionLabel, Stat, t } from '../shared'
@@ -138,7 +139,7 @@ export function Live({ game }: { game: Game }) {
             }}
           >
             {setup.team.name}
-            <ClubCrest clubId={setup.team.clubId ?? undefined} size={26} />
+            <SideMark side={setup.team} />
           </div>
           <Display size={38} style={{ letterSpacing: '0.02em' }}>
             {live.teamGoals}–{live.opponentGoals}
@@ -152,7 +153,7 @@ export function Live({ game }: { game: Game }) {
               color: t.mutedStrong,
             }}
           >
-            <ClubCrest clubId={setup.opponent.clubId ?? undefined} size={26} />
+            <SideMark side={setup.opponent} />
             {setup.opponent.name}
           </div>
         </div>
@@ -385,4 +386,18 @@ function statusOf(live: NonNullable<Game['live']>): string {
   if (live.player.injured) return 'LES.'
   if (!live.onPitch) return 'FORA'
   return `${live.player.yellow > 0 ? 'AMAR.' : 'EM CAMPO'}`
+}
+
+/**
+ * Quem é o time em campo: escudo num jogo de clube, bandeira num de seleção.
+ *
+ * Os dois lados de uma partida são sempre do mesmo tipo — clube contra clube
+ * ou seleção contra seleção —, então basta olhar o próprio lado.
+ */
+function SideMark({ side }: { side: MatchSide }) {
+  return side.nationId ? (
+    <Flag nationality={side.nationId} size={24} />
+  ) : (
+    <ClubCrest clubId={side.clubId ?? undefined} size={26} />
+  )
 }

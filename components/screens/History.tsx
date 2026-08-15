@@ -10,6 +10,7 @@ import { careerTotals } from '@/lib/sim/ladder'
 
 import { CompetitionRow } from '../CompetitionRow'
 import { ClubCrest } from '../Crest'
+import { Trophy as TrophyImage } from '../Trophy'
 import { NationalMatches } from '../NationalMatches'
 import { ScreenLayout } from '../ScreenLayout'
 import { Display, GhostButton, scaled, SectionLabel, Stat, t } from '../shared'
@@ -174,6 +175,13 @@ function SpellRow({ spell }: { spell: ClubSpell }) {
   )
 }
 
+/**
+ * Um título na estante.
+ *
+ * A taça fica à esquerda, no tamanho em que ainda dá para reconhecer qual é —
+ * é ela que faz a sala de troféus parecer uma sala de troféus, e não uma
+ * lista.
+ */
 function TrophyRow({ trophy }: { trophy: Trophy }) {
   return (
     <div
@@ -182,34 +190,41 @@ function TrophyRow({ trophy }: { trophy: Trophy }) {
         borderRadius: 6,
         background: t.goldSoft,
         padding: `${scaled(8)} ${scaled(10)}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: scaled(10),
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'baseline',
-          gap: scaled(8),
-        }}
-      >
+      <TrophyImage competitionId={trophy.imageId} size={44} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
-            fontSize: scaled(12),
-            fontWeight: 800,
-            color: t.goldText,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            gap: scaled(8),
           }}
         >
-          {trophy.name}
+          <div
+            style={{
+              fontSize: scaled(12),
+              fontWeight: 800,
+              color: t.goldText,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {trophy.name}
+          </div>
+          <Display size={16} style={{ color: t.goldText }}>
+            {trophy.count}×
+          </Display>
         </div>
-        <Display size={16} style={{ color: t.goldText }}>
-          {trophy.count}×
-        </Display>
-      </div>
-      <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.muted }}>
-        {trophy.scope === 'selecao' ? 'Seleção' : 'Clube'} · {trophy.years.join(', ')}
+        <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.muted }}>
+          {trophy.scope === 'selecao' ? 'Seleção' : 'Clube'} · {trophy.years.join(', ')}
+        </div>
       </div>
     </div>
   )

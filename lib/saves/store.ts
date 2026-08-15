@@ -30,6 +30,7 @@ import {
   type SaveSlotView,
   type SaveSummary,
 } from './types'
+import { migrateSnapshot } from './migrate'
 
 /**
  * Teto do estado serializado, com folga para o resto do documento.
@@ -115,8 +116,14 @@ export async function writeSave(
 /**
  * Lê uma vaga e devolve a carreira pronta para retomar.
  *
- * Recusa o que não sabe carregar — vaga vazia, documento sem estado, formato
- * de outra versão do jogo — sempre com o motivo em texto de tela.
+ * Save antigo **não** é recusado: ele passa por `migrateSnapshot`, que
+ * preenche o que o formato ganhou desde então. Uma carreira de dez anos não
+ * pode morrer porque o motor cresceu — ver o comentário lá para o que dá e o
+ * que não dá para recuperar.
+ *
+ * O que continua sendo recusado é o que não dá para ler de jeito nenhum: vaga
+ * vazia, documento sem estado, JSON quebrado — sempre com o motivo em texto de
+ * tela.
  */
 export async function readSave(uid: string, slot: SaveSlot): Promise<CareerSnapshot> {
   const found = await getDoc(doc(savesRef(firestore(), uid), slot))
@@ -127,10 +134,6 @@ export async function readSave(uid: string, slot: SaveSlot): Promise<CareerSnaps
 
   if (typeof data.state !== 'string') {
     throw new Error('O save desta vaga está corrompido e não pode ser carregado.')
-  }
-
-  if (data.version !== SNAPSHOT_VERSION) {
-    throw new Error('Este save é de uma versão anterior do jogo e não pode ser carregado.')
   }
 
   let snapshot: CareerSnapshot
@@ -146,7 +149,11 @@ export async function readSave(uid: string, slot: SaveSlot): Promise<CareerSnaps
     throw new Error('O save desta vaga está corrompido e não pode ser carregado.')
   }
 
-  return snapshot
+  if (data.version !== SNAPSHOT_VERSION) {
+    console.info('[saves] migrando vaga', slot, `de v${data.version} para v${SNAPSHOT_VERSION}`)
+  }
+
+  return migrateSnapshot(snapshot)
 }
 
 export async function deleteSave(uid: string, slot: SaveSlot): Promise<void> {

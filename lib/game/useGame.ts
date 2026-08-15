@@ -8,6 +8,7 @@ import {
   closeMarket,
   contractInputAt,
   dropOffer,
+  nationalCalendarFor,
   playSeason,
   renewContract,
   resolveTransfer,
@@ -23,6 +24,8 @@ import {
   type SeasonRecord,
 } from '@/lib/sim/career'
 import { clubById } from '@/lib/sim/data/clubs'
+import { nationById } from '@/lib/sim/data/nations'
+import { titlesIn, type SeasonTitle } from '@/lib/sim/history'
 import { clubsInDivision } from '@/lib/sim/world'
 import { leagueById, type League } from '@/lib/sim/data/leagues'
 import { LEGENDS } from '@/lib/sim/data/legends'
@@ -54,6 +57,7 @@ import {
   finishMatchdaySeason,
   isSeasonOver,
   nextFixture,
+  SELECAO,
   setupForNext,
   startMatchdaySeason,
   type MatchdayLog,
@@ -104,7 +108,10 @@ export type Screen =
   | 'market'
   | 'saves'
 
-export type Overlay = { type: 'award'; award: Award }
+export type Overlay =
+  | { type: 'award'; award: Award }
+  /** Título conquistado na temporada, com a taça. */
+  | { type: 'title'; title: SeasonTitle; teamName: string; season: string }
 
 /** Como a mesa de negociação terminou. */
 export type NegotiationResult = 'acerto' | 'recusa'
@@ -175,7 +182,6 @@ export function useGame() {
    * sozinho. Reaparece a cada temporada nova, porque é a cada ano que a janela
    * de transferências volta a valer.
    */
-  const [agentHint, setAgentHint] = useState(false)
 
   /**
    * O que aconteceu em cada mesa desta janela.
@@ -317,12 +323,8 @@ export function useGame() {
     setScreen('club')
   }, [peakAttrs, finalPosition, nationality, shirtNumber, draft, name, careerMode, startClubId])
 
-  const beginCareer = useCallback(() => {
-    setAgentHint(career?.config.careerMode === 'classico')
-    setScreen('career')
-  }, [career])
+  const beginCareer = useCallback(() => setScreen('career'), [])
 
-  const dismissAgentHint = useCallback(() => setAgentHint(false), [])
 
   /** Melhor foco de treino, usado quando o jogador não escolhe nenhum. */
   const suggestedFocus = useCallback(
@@ -405,7 +407,22 @@ export function useGame() {
       const result = playSeason(career, focus, playedLeague)
       const record = result.record
 
-      const post: Overlay[] = record.awards.map((award) => ({ type: 'award', award }))
+      // Título primeiro, prêmio individual depois: a taça é do time e vem no
+      // apito final; a cerimônia de prêmio é o fecho da temporada.
+      const post: Overlay[] = [
+        ...titlesIn(record).map(
+          (title): Overlay => ({
+            type: 'title',
+            title,
+            teamName:
+              title.scope === 'selecao'
+                ? (nationById(career.config.nationality)?.name ?? career.config.nationality)
+                : (clubById(record.clubId)?.name ?? record.clubId),
+            season: record.label,
+          }),
+        ),
+        ...record.awards.map((award): Overlay => ({ type: 'award', award })),
+      ]
 
       // Uma exigência por proposta, e a janela é nova: o que foi negociado no
       // ano passado não pode continuar valendo neste.
@@ -507,6 +524,7 @@ export function useGame() {
           seed: state.config.seed,
           seasonIndex: state.seasonIndex,
           competitions: clubCompetitions(state, league),
+          national: nationalCalendarFor(state),
         })
 
       while (!isSeasonOver(season) && !nextFixture(season)) {
@@ -528,9 +546,14 @@ export function useGame() {
     const next = nextFixture(open.season)
     if (!next) return null
 
+    const isNational = next.competitionId === SELECAO
+
     return {
       opponentId: next.opponentId,
-      opponentName: clubById(next.opponentId)?.name ?? 'adversário',
+      opponentName: isNational
+        ? (nationById(next.opponentId)?.name ?? 'adversário')
+        : (clubById(next.opponentId)?.name ?? 'adversário'),
+      isNational,
       competition: next.competitionName,
       stage: next.stage,
       atHome: next.atHome,
@@ -561,9 +584,9 @@ export function useGame() {
     const { club, league, clubs, season } = open
 
     if (isSeasonOver(season)) {
-      const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
+      const { outcome, stats, cups, winners, national } = finishMatchdaySeason(season, league)
       setMatchday(season)
-      closeSeason({ outcome, stats, cups, winners, morale: career.morale }, season.log)
+      closeSeason({ outcome, stats, cups, winners, national, morale: career.morale }, season.log)
       return
     }
 
@@ -643,7 +666,7 @@ export function useGame() {
       ]
     }
 
-    const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
+    const { outcome, stats, cups, winners, national } = finishMatchdaySeason(season, league)
 
     setCareer({ ...career, morale })
     setMatchday(season)
@@ -651,7 +674,7 @@ export function useGame() {
     // De uma vez só: são dezenas de rodadas, e empilhar uma notícia por vez
     // faria o feed nascer cortado pelo teto na ponta errada.
     pushNews(items)
-    closeSeason({ outcome, stats, cups, winners, morale }, season.log)
+    closeSeason({ outcome, stats, cups, winners, national, morale }, season.log)
   }, [
     career,
     openMatchdaySeason,
@@ -757,8 +780,8 @@ export function useGame() {
     )
 
     if (isSeasonOver(season)) {
-      const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
-      closeSeason({ outcome, stats, cups, winners, morale }, season.log)
+      const { outcome, stats, cups, winners, national } = finishMatchdaySeason(season, league)
+      closeSeason({ outcome, stats, cups, winners, national, morale }, season.log)
       return
     }
 
@@ -787,10 +810,6 @@ export function useGame() {
     setPending(null)
     setOverlayQueue(post)
     setScreen(retired ? 'end' : market ? 'market' : 'career')
-
-    // O ano virou: a janela de transferências volta a valer, e o aviso do
-    // empresário volta com ela.
-    setAgentHint(!retired && career?.config.careerMode === 'classico')
   }, [pending, career])
 
   const overlay = overlayQueue[0] ?? null
@@ -1026,7 +1045,6 @@ export function useGame() {
     setLastTable(null)
     setNegotiated({})
     setTrainingFocus(null)
-    setAgentHint(false)
     matchRng.current = null
 
     setCareer(saved.career)
@@ -1054,10 +1072,7 @@ export function useGame() {
 
   const closeSaves = useCallback(() => setScreen(savesOrigin), [savesOrigin])
 
-  const openAgent = useCallback(() => {
-    setAgentHint(false)
-    setScreen('agent')
-  }, [])
+  const openAgent = useCallback(() => setScreen('agent'), [])
   const closeAgent = useCallback(() => setScreen('career'), [])
 
   /**
@@ -1099,7 +1114,6 @@ export function useGame() {
     setHistoryOrigin('career')
     setSavesOrigin('home')
     setSlot(null)
-    setAgentHint(false)
     setMatchday(null)
     setLive(null)
     setNews([])
@@ -1181,8 +1195,6 @@ export function useGame() {
 
     openAgent,
     closeAgent,
-    agentHint,
-    dismissAgentHint,
     updatePreferences,
     chooseFarewellLeague,
 

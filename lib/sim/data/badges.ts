@@ -453,8 +453,59 @@ export const COMPETITION_BADGES: Record<string, string> = {
   'cup-US': '/badges/competitions/cup-US.png',
   'gold-cup': '/badges/competitions/gold-cup.png',
   'libertadores': '/badges/competitions/libertadores.png',
+  'sudamericana': '/badges/competitions/sudamericana.png',
   'ucl': '/badges/competitions/ucl.png',
+  'uecl': '/badges/competitions/uecl.png',
+  'uel': '/badges/competitions/uel.png',
   'world-cup': '/badges/competitions/world-cup.png',
+}
+
+export const TROPHIES: Record<string, string> = {
+  'afc': '/badges/trophies/afc.png',
+  'ar-1': '/badges/trophies/ar-1.png',
+  'asian-cup': '/badges/trophies/asian-cup.png',
+  'br-1': '/badges/trophies/br-1.png',
+  'br-2': '/badges/trophies/br-2.png',
+  'br-3': '/badges/trophies/br-3.png',
+  'can': '/badges/trophies/can.png',
+  'concachampions': '/badges/trophies/concachampions.png',
+  'copa-america': '/badges/trophies/copa-america.png',
+  'cup-AR': '/badges/trophies/cup-AR.png',
+  'cup-BR': '/badges/trophies/cup-BR.png',
+  'cup-DE': '/badges/trophies/cup-DE.png',
+  'cup-EN': '/badges/trophies/cup-EN.png',
+  'cup-ES': '/badges/trophies/cup-ES.png',
+  'cup-FR': '/badges/trophies/cup-FR.png',
+  'cup-IT': '/badges/trophies/cup-IT.png',
+  'cup-MX': '/badges/trophies/cup-MX.png',
+  'cup-NL': '/badges/trophies/cup-NL.png',
+  'cup-PT': '/badges/trophies/cup-PT.png',
+  'cup-SA': '/badges/trophies/cup-SA.png',
+  'cup-TR': '/badges/trophies/cup-TR.png',
+  'cup-US': '/badges/trophies/cup-US.png',
+  'de-1': '/badges/trophies/de-1.png',
+  'de-2': '/badges/trophies/de-2.png',
+  'en-1': '/badges/trophies/en-1.png',
+  'en-2': '/badges/trophies/en-2.png',
+  'es-1': '/badges/trophies/es-1.png',
+  'es-2': '/badges/trophies/es-2.png',
+  'fr-1': '/badges/trophies/fr-1.png',
+  'fr-2': '/badges/trophies/fr-2.png',
+  'gold-cup': '/badges/trophies/gold-cup.png',
+  'it-1': '/badges/trophies/it-1.png',
+  'it-2': '/badges/trophies/it-2.png',
+  'libertadores': '/badges/trophies/libertadores.png',
+  'mx-1': '/badges/trophies/mx-1.png',
+  'nl-1': '/badges/trophies/nl-1.png',
+  'pt-1': '/badges/trophies/pt-1.png',
+  'sa-1': '/badges/trophies/sa-1.png',
+  'sudamericana': '/badges/trophies/sudamericana.png',
+  'tr-1': '/badges/trophies/tr-1.png',
+  'ucl': '/badges/trophies/ucl.png',
+  'uecl': '/badges/trophies/uecl.png',
+  'uel': '/badges/trophies/uel.png',
+  'us-1': '/badges/trophies/us-1.png',
+  'world-cup': '/badges/trophies/world-cup.png',
 }
 
 export function clubBadge(id: string): string | null {
@@ -468,4 +519,12 @@ export function leagueBadge(id: string): string | null {
 /** `id` e o da competicao continental/selecao, ou `cup-${pais}` para copa nacional. */
 export function competitionBadge(id: string): string | null {
   return COMPETITION_BADGES[id] ?? null
+}
+
+/**
+ * A taca da competicao. Aceita o id de uma liga (`br-1`) e o de uma copa
+ * (`ucl`, `cup-BR`) — as duas coisas sao titulo.
+ */
+export function trophyImage(id: string): string | null {
+  return TROPHIES[id] ?? null
 }

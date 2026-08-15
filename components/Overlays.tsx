@@ -2,7 +2,10 @@ import type { Game, Overlay } from '@/lib/game/useGame'
 import type { SeasonRecord } from '@/lib/sim/career'
 import { AWARD_LABEL, type Award } from '@/lib/sim/awards'
 
+import type { SeasonTitle } from '@/lib/sim/history'
+
 import { Display, GhostButton, scaled, SectionLabel, t } from './shared'
+import { Trophy } from './Trophy'
 
 export function Overlays({ game }: { game: Game }) {
   const overlay = game.overlay
@@ -40,6 +43,14 @@ export function Overlays({ game }: { game: Game }) {
         }}
       >
         {overlay.type === 'award' && <Award game={game} award={overlay.award} />}
+        {overlay.type === 'title' && (
+          <Title
+            game={game}
+            title={overlay.title}
+            teamName={overlay.teamName}
+            season={overlay.season}
+          />
+        )}
       </div>
     </div>
   )
@@ -79,6 +90,123 @@ function Award({ game, award }: { game: Game; award: Award }) {
           </div>
         </>
       )}
+
+      <GhostButton
+        onClick={game.closeOverlay}
+        style={{
+          marginTop: scaled(16),
+          width: '100%',
+          background: t.accent,
+          border: 'none',
+          color: 'white',
+        }}
+      >
+        CONTINUAR
+      </GhostButton>
+    </>
+  )
+}
+
+/**
+ * A volta olimpica.
+ *
+ * A taça é a da competição de verdade — imagem baixada em
+ * `scripts/fetch-badges.ts` — e não um desenho genérico: o que faz o momento
+ * valer é reconhecer qual troféu está na mão. Quando a competição não tem
+ * imagem baixada, o painel continua funcionando sem ela.
+ */
+function Title({
+  game,
+  title,
+  teamName,
+  season,
+}: {
+  game: Game
+  title: SeasonTitle
+  teamName: string
+  season: string
+}) {
+  return (
+    <>
+      <SectionLabel style={{ textAlign: 'center', fontWeight: 800, color: t.gold }}>
+        {title.scope === 'selecao' ? 'TÍTULO PELA SELEÇÃO' : 'TÍTULO'}
+      </SectionLabel>
+
+      <div
+        data-motion="ballon-stage"
+        style={{
+          position: 'relative',
+          height: scaled(150),
+          marginTop: scaled(8),
+          display: 'grid',
+          placeItems: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        <div data-motion="ballon-rays" />
+        <div data-motion="ballon-glow" />
+
+        {SPARKS.map((spark, index) => (
+          <span
+            key={index}
+            data-motion="ballon-spark"
+            style={{
+              position: 'absolute',
+              top: spark.top,
+              left: spark.left,
+              width: scaled(spark.size),
+              height: scaled(spark.size),
+              borderRadius: '50%',
+              background: t.goldText,
+              animationDelay: `${index * 320}ms`,
+            }}
+          />
+        ))}
+
+        <div data-motion="ballon-trophy" style={{ position: 'relative' }}>
+          <Trophy competitionId={title.imageId} size={130} />
+        </div>
+      </div>
+
+      <div
+        data-motion="ballon-title"
+        style={{
+          marginTop: scaled(2),
+          background: `linear-gradient(100deg, ${t.gold} 20%, oklch(99% 0.05 90) 42%, ${t.gold} 64%)`,
+          backgroundSize: '260% 100%',
+          WebkitBackgroundClip: 'text',
+          backgroundClip: 'text',
+        }}
+      >
+        <Display size={24} style={{ textAlign: 'center', color: 'transparent' }}>
+          {title.name.toUpperCase()}
+        </Display>
+      </div>
+
+      <div
+        data-motion="ballon-line"
+        style={{
+          marginTop: scaled(6),
+          fontSize: scaled(12),
+          color: t.muted,
+          textAlign: 'center',
+        }}
+      >
+        {teamName} · {season}
+      </div>
+
+      <div
+        data-motion="ballon-line"
+        style={{
+          marginTop: scaled(4),
+          fontSize: scaled(13),
+          fontWeight: 800,
+          color: t.goldText,
+          textAlign: 'center',
+        }}
+      >
+        CAMPEÃO
+      </div>
 
       <GhostButton
         onClick={game.closeOverlay}
@@ -230,48 +358,35 @@ function CeremonyStat({ value, label }: { value: number; label: string }) {
   )
 }
 
-/** A bola dourada no pedestal. Desenho proprio — o jogo nao usa imagem. */
+/**
+ * A Bola de Ouro no pedestal.
+ *
+ * A imagem nao vem do `fetch-badges.ts` como as outras tacas: a Bola de Ouro
+ * nao e liga nem competicao, e por isso nao existe no TheSportsDB. Ela e um
+ * arquivo proprio do projeto, e fica fora de `badges/trophies/` — aquela pasta
+ * e escrita pelo script, e misturar as duas coisas esconderia qual arquivo
+ * some quando alguem roda o download de novo.
+ */
+const BALLON_IMAGE = '/badges/bola-de-ouro.png'
+
 function BallonTrophy() {
   return (
-    <svg
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
       data-motion="ballon-trophy"
-      viewBox="0 0 100 116"
-      style={{ position: 'relative', width: scaled(96), height: scaled(112) }}
+      src={BALLON_IMAGE}
+      alt=""
       aria-hidden
-    >
-      <defs>
-        <radialGradient id="ballon-sphere" cx="36%" cy="30%" r="72%">
-          <stop offset="0%" stopColor="oklch(97% 0.08 90)" />
-          <stop offset="45%" stopColor="oklch(82% 0.15 78)" />
-          <stop offset="100%" stopColor="oklch(52% 0.11 62)" />
-        </radialGradient>
-        <linearGradient id="ballon-base" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="oklch(74% 0.13 75)" />
-          <stop offset="100%" stopColor="oklch(44% 0.08 60)" />
-        </linearGradient>
-      </defs>
-
-      <ellipse cx="50" cy="110" rx="30" ry="5" fill="oklch(5% 0 0 / 0.45)" />
-      <path d="M34 96 h32 l5 12 h-42 z" fill="url(#ballon-base)" />
-      <rect x="44" y="82" width="12" height="16" rx="2" fill="url(#ballon-base)" />
-
-      <circle cx="50" cy="46" r="38" fill="url(#ballon-sphere)" />
-
-      {/* Os gomos da bola, no mesmo dourado escuro do sombreado. */}
-      <g fill="none" stroke="oklch(40% 0.07 60 / 0.55)" strokeWidth="2.4">
-        <path d="M50 14 l14 10 -5 17 h-18 l-5 -17 z" />
-        <path d="M64 24 l16 5 M36 24 l-16 5 M41 41 l-9 16 M59 41 l9 16 M32 57 l7 17 M68 57 l-7 17 M39 74 h22" />
-      </g>
-
-      {/* O brilho especular: um arco claro no canto superior esquerdo. */}
-      <path
-        d="M28 26 a30 30 0 0 1 20 -12"
-        fill="none"
-        stroke="oklch(99% 0.03 90 / 0.75)"
-        strokeWidth="4"
-        strokeLinecap="round"
-      />
-    </svg>
+      style={{
+        position: 'relative',
+        display: 'block',
+        width: scaled(112),
+        height: scaled(118),
+        objectFit: 'contain',
+        // A foto vem em fundo transparente; a sombra descola a bola do palco.
+        filter: 'drop-shadow(0 6px 16px oklch(5% 0 0 / 0.55))',
+      }}
+    />
   )
 }
 
@@ -279,5 +394,7 @@ function overlayKey(overlay: Overlay): string {
   switch (overlay.type) {
     case 'award':
       return `award-${overlay.award}`
+    case 'title':
+      return `title-${overlay.title.imageId}`
   }
 }

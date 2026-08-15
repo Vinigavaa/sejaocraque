@@ -12,12 +12,14 @@ import {
   type MoraleKey,
 } from '@/lib/sim/morale'
 import { campaignStatus } from '@/lib/sim/campaign'
+import { competitionImageId } from '@/lib/sim/competitions'
 import { statsFromLog } from '@/lib/sim/matchday'
+import { nationalStatus } from '@/lib/sim/national'
 import { finalizeLeague } from '@/lib/sim/season'
 import { ALL_ATTRS, ATTR_LABEL, type Attr } from '@/lib/sim/types'
 
-import { AgentHint } from '../AgentHint'
-import { ClubCrest, LeagueCrest } from '../Crest'
+import { ClubCrest, CompetitionCrest, LeagueCrest } from '../Crest'
+import { Flag } from '../Flag'
 import { PlayerSheet } from '../PlayerSheet'
 import { ScreenLayout } from '../ScreenLayout'
 import { SocialFeed } from '../SocialFeed'
@@ -59,6 +61,7 @@ export function Career({ game }: { game: Game }) {
   // Copa e continental em andamento. Fora do Jogo a Jogo elas só existem no
   // resumo de fim de temporada — não há "agora" para mostrar.
   const campaigns = jogoAJogo && game.matchday ? game.matchday.campaigns : []
+  const national = jogoAJogo && game.matchday ? game.matchday.national : null
 
   const shown = running ?? record?.stats ?? null
   const lastYear = career.contract.seasonsLeft <= 1
@@ -66,7 +69,7 @@ export function Career({ game }: { game: Game }) {
   return (
     <ScreenLayout
       mobileOrder={['center', 'left', 'right']}
-      left={<>        {campaigns.length > 0 && (
+      left={<>        {(campaigns.length > 0 || national) && (
           <section style={{ marginBottom: scaled(16) }}>
             <SectionLabel>Outras competições</SectionLabel>
             <div
@@ -88,12 +91,82 @@ export function Career({ game }: { game: Game }) {
                     fontSize: scaled(11),
                   }}
                 >
-                  <div style={{ fontWeight: 700 }}>{campaign.name}</div>
-                  <div style={{ color: t.mutedStrong, textAlign: 'right' }}>
+                  {/* O id da campanha é o da simulação (`copa`, `ucl`); a
+                      imagem precisa do id traduzido, que para a copa nacional
+                      depende do país da liga. */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: scaled(8),
+                      minWidth: 0,
+                    }}
+                  >
+                    <CompetitionCrest
+                      competitionId={competitionImageId(campaign.id, career.leagueId)}
+                      size={16}
+                    />
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {campaign.name}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      color: t.mutedStrong,
+                      textAlign: 'right',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
                     {campaignStatus(campaign)}
                   </div>
                 </div>
               ))}
+
+              {/* A seleção fecha a lista: ela não é do clube, e mistura
+                  amistoso, Eliminatórias e torneio dentro do mesmo ano. */}
+              {national && (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: scaled(8),
+                    padding: `${scaled(6)} ${scaled(10)}`,
+                    fontSize: scaled(11),
+                    borderTop: `1px solid ${t.lineSoft}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: scaled(8),
+                      minWidth: 0,
+                    }}
+                  >
+                    <Flag nationality={national.nationId} size={14} />
+                    <div style={{ fontWeight: 700 }}>
+                      {national.tournament?.name ?? 'Seleção'}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      color: t.mutedStrong,
+                      textAlign: 'right',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {nationalStatus(national)}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -266,7 +339,6 @@ export function Career({ game }: { game: Game }) {
         </div>
       }
     >
-      <AgentHint game={game} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: scaled(20) }}>
         <section>
@@ -490,16 +562,24 @@ function NextMatch({ game }: { game: Game }) {
           gap: scaled(8),
         }}
       >
-        <ClubCrest clubId={next.opponentId} size={20} />
+        {/* Jogo de seleção é país contra país: quem identifica é a bandeira. */}
+        {next.isNational ? (
+          <Flag nationality={next.opponentId} size={18} />
+        ) : (
+          <ClubCrest clubId={next.opponentId} size={20} />
+        )}
         <div style={{ fontSize: scaled(13), fontWeight: 800, minWidth: 0 }}>
           {next.opponentName}
         </div>
-        <Badge
-          bg={next.atHome ? t.greenSoft : t.accentSoft}
-          color={next.atHome ? t.greenText : t.text}
-        >
-          {next.atHome ? 'Em casa' : 'Fora'}
-        </Badge>
+        {/* Mando de campo não existe em jogo de seleção. */}
+        {!next.isNational && (
+          <Badge
+            bg={next.atHome ? t.greenSoft : t.accentSoft}
+            color={next.atHome ? t.greenText : t.text}
+          >
+            {next.atHome ? 'Em casa' : 'Fora'}
+          </Badge>
+        )}
       </div>
       <div style={{ marginTop: scaled(4), fontSize: scaled(10), color: t.mutedStrong }}>
         {/* Rodada de liga tem número; jogo de copa tem fase. */}

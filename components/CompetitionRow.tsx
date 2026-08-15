@@ -1,6 +1,7 @@
 import type { SeasonLine } from '@/lib/sim/career'
 
 import { CompetitionCrest } from './Crest'
+import { Flag } from './Flag'
 import { scaled, t } from './shared'
 
 /**
@@ -23,7 +24,13 @@ export function CompetitionRow({ line }: { line: SeasonLine }) {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: scaled(8), minWidth: 0 }}>
-        <CompetitionCrest competitionId={line.badgeId} size={22} />
+        {/* A seleção sem torneio no ano não tem emblema de competição — ali
+            quem identifica é a bandeira. */}
+        {line.badgeId ? (
+          <CompetitionCrest competitionId={line.badgeId} size={22} />
+        ) : (
+          <Flag nationality={line.nationId ?? undefined} size={18} />
+        )}
         <div style={{ minWidth: 0 }}>
           <div
             style={{

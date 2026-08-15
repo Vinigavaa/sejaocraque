@@ -14,6 +14,7 @@
  */
 import {
   clubCompetitions,
+  nationalCalendarFor,
   playSeason,
   startCareer,
   type CareerState,
@@ -68,6 +69,7 @@ function playMatchdaySeason(state: CareerState) {
     seed: state.config.seed,
     seasonIndex: state.seasonIndex,
     competitions: clubCompetitions(state, league),
+    national: nationalCalendarFor(state),
   })
 
   let morale = state.morale
@@ -122,8 +124,8 @@ function playMatchdaySeason(state: CareerState) {
     )
   }
 
-  const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
-  return { outcome, stats, cups, winners, morale, biggest }
+  const { outcome, stats, cups, winners, national } = finishMatchdaySeason(season, league)
+  return { outcome, stats, cups, winners, national, morale, biggest }
 }
 
 const totals = {
@@ -162,6 +164,7 @@ for (let index = 0; index < CAREERS; index++) {
     stats: played.stats,
     cups: played.cups,
     winners: played.winners,
+    national: played.national,
     morale: played.morale,
   })
 

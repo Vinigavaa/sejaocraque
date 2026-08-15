@@ -8,7 +8,12 @@
  * temporada, mesmo as que o jogador nunca disputou? A classificacao
  * continental sai das tabelas de verdade?
  */
-import { clubCompetitions, playSeason, startCareer } from '../lib/sim/career'
+import {
+  clubCompetitions,
+  nationalCalendarFor,
+  playSeason,
+  startCareer,
+} from '../lib/sim/career'
 import { clubById } from '../lib/sim/data/clubs'
 import { leagueById, LEAGUES } from '../lib/sim/data/leagues'
 import {
@@ -59,6 +64,7 @@ for (let year = 0; year < 5 && !state.retired; year++) {
     seed: state.config.seed,
     seasonIndex: state.seasonIndex,
     competitions: clubCompetitions(state, league),
+    national: nationalCalendarFor(state),
   })
 
   console.log(
@@ -104,7 +110,7 @@ for (let year = 0; year < 5 && !state.retired; year++) {
     )
   }
 
-  const { outcome, stats, cups, winners } = finishMatchdaySeason(season, league)
+  const { outcome, stats, cups, winners, national } = finishMatchdaySeason(season, league)
 
   console.log(
     `  liga: ${stats.matches}j ${stats.goals}g · ${outcome.standings.findIndex((r) => r.clubId === club.id) + 1}º`,
@@ -114,7 +120,7 @@ for (let year = 0; year < 5 && !state.retired; year++) {
   }
   console.log('  campeões:', winners)
 
-  const result = playSeason(state, null, { outcome, stats, cups, winners, morale })
+  const result = playSeason(state, null, { outcome, stats, cups, winners, national, morale })
   state = result.state
 
   const moved = Object.keys(state.world.divisions).filter(

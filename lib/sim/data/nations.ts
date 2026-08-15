@@ -112,3 +112,13 @@ export function nationById(id: string): Nation | undefined {
 
 /** Quantas selecoes disputam a Copa do Mundo. */
 export const WORLD_CUP_SLOTS = 32
+
+/**
+ * Forca media das selecoes.
+ *
+ * E a referencia de nivel de um jogo de selecao, do mesmo jeito que a media da
+ * liga e a de um jogo de clube: e ela que diz se o adversario de hoje esta
+ * acima ou abaixo do padrao do futebol internacional.
+ */
+export const NATIONS_AVERAGE =
+  NATIONS.reduce((sum, nation) => sum + nation.strength, 0) / NATIONS.length

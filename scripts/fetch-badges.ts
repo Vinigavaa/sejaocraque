@@ -107,6 +107,10 @@ const COMPETITION_SOURCES: Record<string, string[]> = {
   afc: ['AFC Champions League Elite', 'AFC Champions League'],
 
   // Selecoes.
+  //
+  // A Eurocopa nao e alcancavel pela chave publica: nenhuma selecao a lista em
+  // `strLeague2..7` (so a fase de qualificacao aparece), e `all_leagues.php` e
+  // truncado em 5 itens. Fica sem logo e sem taca — a UI ja cai no fallback.
   euro: ['UEFA European Championship', 'European Championship'],
   'copa-america': ['Copa America'],
   can: ['African Cup of Nations'],
@@ -192,12 +196,24 @@ const CLUB_OVERRIDES: Record<string, string> = {
 const NOISE = /\b(fc|cf|sc|ac|ec|cd|ca|afc|sad|club|clube|futbol|football|calcio|de|do|da)\b/g
 
 function normalize(name: string): string {
+  return normalizeCompetition(name).replace(NOISE, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A mesma reducao, **sem** cortar os termos societarios.
+ *
+ * `NOISE` existe para nomes de clube, onde "Club" e ruido de verdade ("Club
+ * America" e "America" sao o mesmo time). Em nome de competicao ele apaga
+ * significado: `FIFA Club World Cup` e `FIFA World Cup` caiam na mesma chave,
+ * e o indice ficava com o id do Mundial de Clubes — o jogo mostrava a taca e o
+ * emblema do Mundial de Clubes na Copa do Mundo.
+ */
+function normalizeCompetition(name: string): string {
   return name
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
-    .replace(NOISE, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -234,7 +250,7 @@ function indexCompetitions(team: ApiTeam): void {
     const name = team[`strLeague${suffix}`]
     const id = team[`idLeague${suffix}`]
     if (!name || !id) continue
-    const key = normalize(name)
+    const key = normalizeCompetition(name)
     if (key && !competitionIds.has(key)) competitionIds.set(key, id)
   }
 }
@@ -305,16 +321,36 @@ async function api(path: string): Promise<Record<string, unknown> | null> {
 }
 
 /** Baixa a imagem. Retorna o caminho publico, ou null se falhou. */
-async function download(url: string, kind: string, id: string): Promise<string | null> {
-  const extension = (url.match(/\.(png|jpg|jpeg|webp|svg)(?:\?|$)/i)?.[1] ?? 'png').toLowerCase()
-  const relative = `/badges/${kind}/${id}.${extension}`
-  const destination = join(PUBLIC_DIR, kind, `${id}.${extension}`)
+/**
+ * Baixa a imagem do trofeu.
+ *
+ * Sempre na versao reduzida, independente de `--preview`: o trofeu e foto com
+ * transparencia, e o original passa de 400 KB. Na tela ele nunca aparece
+ * maior que ~140px, entao o original seria meio megabyte commitado para
+ * exibir uma miniatura.
+ */
+async function downloadTrophy(url: string, id: string): Promise<string | null> {
+  return download(`${url}/preview`, 'trophies', id, `${id}.png`)
+}
+
+async function download(
+  url: string,
+  kind: string,
+  id: string,
+  fileName?: string,
+): Promise<string | null> {
+  const extension = (url.match(/\.(png|jpg|jpeg|webp|svg)(?:\/|\?|$)/i)?.[1] ?? 'png').toLowerCase()
+  const name = fileName ?? `${id}.${extension}`
+  const relative = `/badges/${kind}/${name}`
+  const destination = join(PUBLIC_DIR, kind, name)
 
   if (!FORCE && (await exists(destination))) return relative
 
   await sleep(IMAGE_DELAY_MS)
   try {
-    const response = await fetch(PREVIEW ? `${url}/preview` : url)
+    const response = await fetch(
+      PREVIEW && !url.endsWith('/preview') ? `${url}/preview` : url,
+    )
     if (!response.ok) {
       console.warn(`  ! HTTP ${response.status} baixando ${id}`)
       return null
@@ -338,9 +374,12 @@ async function download(url: string, kind: string, id: string): Promise<string |
 const clubBadges: Record<string, string> = {}
 const leagueBadges: Record<string, string> = {}
 const competitionBadges: Record<string, string> = {}
+/** Taca de cada competicao, ligas incluidas. Id igual ao do escudo. */
+const trophies: Record<string, string> = {}
 const missingClubs: string[] = []
 const missingLeagues: string[] = []
 const missingCompetitions: string[] = []
+const missingTrophies: string[] = []
 
 /** Procura a liga por nome, tentando os candidatos em ordem. */
 async function findLeagueTeams(
@@ -449,24 +488,42 @@ async function collectClubsAndLeagues(): Promise<void> {
     }
 
     // O logo da liga sai do id que veio junto com os times.
-    const apiId = leagueApiId ?? competitionIds.get(normalize(candidates[0] ?? ''))
+    const apiId = leagueApiId ?? competitionIds.get(normalizeCompetition(candidates[0] ?? ''))
     if (!apiId) {
       missingLeagues.push(league.id)
       continue
     }
 
-    const badge = await leagueBadgeUrl(apiId)
+    const { badge, trophy } = await leagueImages(apiId)
     const path = badge ? await download(badge, 'leagues', league.id) : null
     if (path) leagueBadges[league.id] = path
     else missingLeagues.push(league.id)
+
+    // O titulo da liga tambem e titulo: a taca do Brasileirao aparece na
+    // mesma vitrine que a da Libertadores.
+    const trophyPath = trophy ? await downloadTrophy(trophy, league.id) : null
+    if (trophyPath) trophies[league.id] = trophyPath
+    else missingTrophies.push(league.id)
   }
 }
 
-/** Escudo/logo de uma liga ou copa, pelo id da API. */
-async function leagueBadgeUrl(apiId: string): Promise<string | null> {
+/**
+ * Escudo e trofeu de uma liga ou copa, pelo id da API.
+ *
+ * Os dois saem da mesma resposta de proposito: sao duas imagens do mesmo
+ * registro, e uma segunda chamada so serviria para gastar o limite da chave
+ * publica.
+ */
+async function leagueImages(
+  apiId: string,
+): Promise<{ badge: string | null; trophy: string | null }> {
   const detail = await api(`lookupleague.php?id=${apiId}`)
   const record = (detail?.leagues as Array<Record<string, string | null>> | undefined)?.[0]
-  return record?.strBadge || record?.strLogo || null
+
+  return {
+    badge: record?.strBadge || record?.strLogo || null,
+    trophy: record?.strTrophy || null,
+  }
 }
 
 async function collectCompetitions(): Promise<void> {
@@ -475,13 +532,20 @@ async function collectCompetitions(): Promise<void> {
   for (const seed of COMPETITION_SEEDS) await searchClub(seed)
 
   for (const [id, candidates] of Object.entries(COMPETITION_SOURCES)) {
-    const apiId = candidates.map((name) => competitionIds.get(normalize(name))).find(Boolean)
+    const apiId = candidates
+      .map((name) => competitionIds.get(normalizeCompetition(name)))
+      .find(Boolean)
     if (!apiId) {
       missingCompetitions.push(`${id} (${candidates[0]}) — id nao encontrado`)
       continue
     }
 
-    const badge = await leagueBadgeUrl(apiId)
+    const { badge, trophy } = await leagueImages(apiId)
+
+    const trophyPath = trophy ? await downloadTrophy(trophy, id) : null
+    if (trophyPath) trophies[id] = trophyPath
+    else missingTrophies.push(`${id} (${candidates[0]})`)
+
     if (!badge) {
       missingCompetitions.push(`${id} (${candidates[0]}) — sem imagem na API`)
       continue
@@ -514,6 +578,7 @@ async function writeManifest(): Promise<void> {
 ${serialize('CLUB_BADGES', clubBadges)}
 ${serialize('LEAGUE_BADGES', leagueBadges)}
 ${serialize('COMPETITION_BADGES', competitionBadges)}
+${serialize('TROPHIES', trophies)}
 export function clubBadge(id: string): string | null {
   return CLUB_BADGES[id] ?? null
 }
@@ -525,6 +590,14 @@ export function leagueBadge(id: string): string | null {
 /** \`id\` e o da competicao continental/selecao, ou \`cup-\${pais}\` para copa nacional. */
 export function competitionBadge(id: string): string | null {
   return COMPETITION_BADGES[id] ?? null
+}
+
+/**
+ * A taca da competicao. Aceita o id de uma liga (\`br-1\`) e o de uma copa
+ * (\`ucl\`, \`cup-BR\`) — as duas coisas sao titulo.
+ */
+export function trophyImage(id: string): string | null {
+  return TROPHIES[id] ?? null
 }
 `
   await writeFile(MANIFEST, content, 'utf8')
@@ -542,6 +615,9 @@ async function main(): Promise<void> {
   console.log(`ligas:       ${Object.keys(leagueBadges).length}/${LEAGUES.length}`)
   const totalCompetitions = Object.keys(COMPETITION_SOURCES).length
   console.log(`competicoes: ${Object.keys(competitionBadges).length}/${totalCompetitions}`)
+  console.log(
+    `tacas:       ${Object.keys(trophies).length}/${totalCompetitions + LEAGUES.length}`,
+  )
 
   if (missingClubs.length) {
     console.log(`\nClubes sem escudo (${missingClubs.length}) — mapear em CLUB_OVERRIDES:`)

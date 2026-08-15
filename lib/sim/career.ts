@@ -30,7 +30,9 @@ import {
   nationalFinal,
   nationalTotals,
   playNationalSeason,
+  startNationalCalendar,
   wonWorldCup,
+  type NationalCalendar,
   type NationalSeason,
 } from './national'
 import { leagueById, type League } from './data/leagues'
@@ -389,13 +391,14 @@ export type PlayedLeague = {
   /** Moral acumulada partida a partida ao longo da liga. */
   morale: Morale
   /**
-   * Copa nacional e continental ja disputadas partida a partida. Quando vem
-   * preenchido, `playCups` nao roda: as campanhas do jogador ja aconteceram, e
-   * simula-las de novo trocaria o que ele acabou de jogar por outro resultado.
+   * Copa nacional e continental ja disputadas partida a partida. Simula-las de
+   * novo aqui trocaria o que o jogador acabou de jogar por outro resultado.
    */
-  cups?: CompetitionRun[]
+  cups: CompetitionRun[]
   /** Campeao de cada competicao que o jogador disputou, para o mundo. */
-  winners?: Record<string, string>
+  winners: Record<string, string>
+  /** O ano de selecao ja disputado. `null` quando ele nao foi convocado. */
+  national: NationalSeason | null
 }
 
 /**
@@ -455,8 +458,8 @@ export function playSeason(
   // No Jogo a Jogo as copas ja foram disputadas partida a partida; no
   // Classico elas sao simuladas aqui. Nos dois casos o resultado alimenta o
   // resumo da temporada e o mundo pela mesma porta.
-  const played = playedLeague?.cups
-    ? { runs: playedLeague.cups, winners: playedLeague.winners ?? {} }
+  const played = playedLeague
+    ? { runs: playedLeague.cups, winners: playedLeague.winners }
     : playCups(
         {
           overall,
@@ -494,19 +497,25 @@ export function playSeason(
 
   const moraleDuringSeason = playedLeague?.morale ?? state.morale
 
-  const national = playNationalSeason(
-    {
-      overall,
-      position: state.config.position,
-      nationality: state.config.nationality,
-      // Nome pesa na convocacao: o tecnico da selecao le a temporada inteira,
-      // nao so o OVR. Vale ate tres pontos — empurra quem esta na bolha, nao
-      // convoca quem esta longe do nivel.
-      callUpBonus: moraleDuringSeason.reputation * 0.03,
-    },
-    state.seasonIndex,
-    rng,
-  )
+  // No Jogo a Jogo a selecao tambem foi jogada partida a partida, e a
+  // convocacao aconteceu no inicio do ano — ver `startNationalCalendar`. No
+  // Classico ela e resolvida aqui, com a reputacao do ano ja fechada.
+  const national =
+    playedLeague?.national !== undefined
+      ? playedLeague.national
+      : playNationalSeason(
+          {
+            overall,
+            position: state.config.position,
+            nationality: state.config.nationality,
+            // Nome pesa na convocacao: o tecnico da selecao le a temporada
+            // inteira, nao so o OVR. Vale ate tres pontos — empurra quem esta
+            // na bolha, nao convoca quem esta longe do nivel.
+            callUpBonus: moraleDuringSeason.reputation * 0.03,
+          },
+          state.seasonIndex,
+          rng,
+        )
 
   const decisive = decisiveMatch(
     {
@@ -1006,6 +1015,27 @@ function worldWinners(
 }
 
 /**
+ * O ano de selecao no modo Jogo a Jogo, montado no comeco da temporada.
+ *
+ * O peso do nome na convocacao vem da reputacao com que o jogador entrou no
+ * ano — no Classico ela e lida no fim, mas aqui os jogos precisam existir
+ * antes de a temporada comecar, e uma convocacao decidida em dezembro nao
+ * teria como colocar a Copa do Mundo no calendario de agosto.
+ */
+export function nationalCalendarFor(state: CareerState): NationalCalendar | null {
+  return startNationalCalendar(
+    {
+      overall: currentOverall(state.peakAttrs, state.config.position, state.age),
+      position: state.config.position,
+      nationality: state.config.nationality,
+      callUpBonus: state.morale.reputation * 0.03,
+    },
+    state.seasonIndex,
+    careerRng(state.config.seed, `convocacao:${state.seasonIndex}`),
+  )
+}
+
+/**
  * As competicoes de mata-mata que o clube disputa nesta temporada.
  *
  * E a lista que o modo Jogo a Jogo transforma em datas do calendario. A regra
@@ -1256,10 +1286,16 @@ export type SeasonLine = {
   reached: string
   won: boolean
   /**
-   * Id da imagem da competicao, ou `null` na linha da selecao — o emblema de
-   * um pais e a bandeira, que ja tem componente proprio.
+   * Id da imagem da competicao. `null` quando ela nao tem emblema proprio —
+   * ano de selecao sem torneio, por exemplo, em que o compromisso foi
+   * Eliminatorias e amistosos.
    */
   badgeId: string | null
+  /**
+   * Preenchido so na linha da selecao. E o que permite cair na bandeira do
+   * pais quando nao ha emblema de competicao para mostrar.
+   */
+  nationId: string | null
 }
 
 export type SeasonTotals = {
@@ -1285,6 +1321,7 @@ export function seasonTotals(record: SeasonRecord): SeasonTotals {
       reached: `${record.tablePosition}º lugar`,
       won: record.champion,
       badgeId: record.leagueId,
+      nationId: null,
     },
     ...record.cups.map((run) => ({
       name: run.name,
@@ -1294,6 +1331,7 @@ export function seasonTotals(record: SeasonRecord): SeasonTotals {
       reached: run.reached,
       won: run.won,
       badgeId: competitionImageId(run.id, record.leagueId),
+      nationId: null,
     })),
   ]
 
@@ -1310,7 +1348,10 @@ export function seasonTotals(record: SeasonRecord): SeasonTotals {
       assists: totals.assists,
       reached: tournament ? `${tournament.name} · ${tournament.reached}` : 'Convocado',
       won: tournament?.won ?? false,
-      badgeId: null,
+      // Ano de torneio mostra o emblema do torneio; ano de preparacao nao tem
+      // emblema nenhum e cai na bandeira do pais.
+      badgeId: tournament?.id ?? null,
+      nationId: national.nationId,
     })
   }
 

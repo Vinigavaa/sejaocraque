@@ -26,6 +26,15 @@ import {
 } from './season'
 import type { MatchSetup, PlayerMatchResult } from './liveMatch'
 import type { CompetitionRun, Contender } from './competitions'
+import {
+  completeNationalDate,
+  finishNationalSeason,
+  nationalFixture,
+  nationalSide,
+  type NationalCalendar,
+  type NationalSeason,
+} from './national'
+import { NATIONS_AVERAGE } from './data/nations'
 import type { Club, Position } from './types'
 
 /**
@@ -48,8 +57,11 @@ import type { Club, Position } from './types'
  * campeonato — muda quem decide as partidas do clube do jogador.
  */
 
-/** Uma data do calendario: rodada de liga ou rodada de uma competicao. */
-export type SeasonDate = { kind: 'liga' } | { kind: 'copa'; campaignId: string }
+/** Uma data do calendario: liga, copa de clube ou compromisso de selecao. */
+export type SeasonDate =
+  | { kind: 'liga' }
+  | { kind: 'copa'; campaignId: string }
+  | { kind: 'selecao' }
 
 export type MatchdayLog = {
   /** Id da competicao: a liga, `'copa'` ou a continental. */
@@ -79,7 +91,15 @@ export type MatchdaySeason = {
   form: [string, number][]
   /** Copa nacional e continentais em que o clube esta classificado. */
   campaigns: Campaign[]
-  /** Liga e copas na ordem em que sao disputadas. */
+  /**
+   * O ano de selecao. `null` quando o jogador nao foi convocado.
+   *
+   * Os jogos dele nao entram em `log`: o registro da selecao e proprio, e
+   * `opponentId` ali e um pais, nao um clube. Somar os dois faria a tela
+   * procurar escudo de clube para a Argentina.
+   */
+  national: NationalCalendar | null
+  /** Liga, copas e selecao na ordem em que sao disputadas. */
   dates: SeasonDate[]
   /** Data atual, base zero. */
   dateIndex: number
@@ -102,6 +122,8 @@ export function startMatchdaySeason(input: {
   seasonIndex: number
   /** Copa nacional e continental. Vazio quando o clube nao disputa nenhuma. */
   competitions: SeasonCompetition[]
+  /** O ano de selecao, ou `null` quando o jogador nao foi convocado. */
+  national: NationalCalendar | null
 }): MatchdaySeason {
   const rng = createRng(`${input.seed}:calendario:${input.seasonIndex}`)
   const { clubs, league } = input
@@ -130,27 +152,39 @@ export function startMatchdaySeason(input: {
     log: [],
     form: [...seasonForm(clubs, rng)],
     campaigns,
-    dates: buildCalendar(schedule.length, campaigns),
+    national: input.national,
+    dates: buildCalendar(schedule.length, campaigns, input.national),
     dateIndex: 0,
   }
 }
 
 /**
- * O calendario da temporada, com as datas de copa espalhadas entre as rodadas
- * da liga.
+ * O calendario da temporada, com copa e selecao espalhadas entre as rodadas da
+ * liga.
  *
  * Espalhar importa: empilhadas no fim, as cinco rodadas da Copa do Brasil
  * viravam um torneio depois do campeonato, e nao uma temporada. As competicoes
  * tambem se intercalam entre si, para que uma fase de grupos inteira nao caia
- * antes de a copa comecar.
+ * antes de a copa comecar — e a selecao entra na mesma roda, como a data Fifa
+ * que ela e.
  */
-function buildCalendar(leagueRounds: number, campaigns: Campaign[]): SeasonDate[] {
-  const queues = campaigns.map((campaign) =>
+function buildCalendar(
+  leagueRounds: number,
+  campaigns: Campaign[],
+  national: NationalCalendar | null,
+): SeasonDate[] {
+  const queues: SeasonDate[][] = campaigns.map((campaign) =>
     Array.from({ length: campaign.dates }, (): SeasonDate => ({
       kind: 'copa',
       campaignId: campaign.id,
     })),
   )
+
+  if (national) {
+    queues.push(Array.from({ length: national.squad.length }, (): SeasonDate => ({
+      kind: 'selecao',
+    })))
+  }
 
   const cupDates: SeasonDate[] = []
   while (queues.some((queue) => queue.length > 0)) {
@@ -179,7 +213,15 @@ export function isSeasonOver(state: MatchdaySeason): boolean {
   return state.dateIndex >= state.dates.length
 }
 
-/** O compromisso do clube do jogador na data atual, ou `null` quando nao ha. */
+/**
+ * Id de competicao usado pelos jogos de selecao no calendario.
+ *
+ * A competicao de verdade muda dentro do proprio ano — amistoso, Eliminatoria,
+ * Copa do Mundo — entao o que identifica a **data** e ser da selecao.
+ */
+export const SELECAO = 'selecao'
+
+/** O compromisso do jogador na data atual, ou `null` quando nao ha. */
 export type NextFixture = {
   competitionId: string
   competitionName: string
@@ -195,6 +237,21 @@ export function nextFixture(state: MatchdaySeason): NextFixture | null {
   if (isSeasonOver(state)) return null
 
   const date = state.dates[state.dateIndex]
+
+  if (date.kind === 'selecao') {
+    const fixture = state.national ? nationalFixture(state.national) : null
+    if (!fixture) return null
+
+    return {
+      competitionId: SELECAO,
+      competitionName: fixture.competition,
+      stage: fixture.stage,
+      opponentId: fixture.opponentId,
+      // Selecao joga em campo neutro ou fora de casa; nao ha mando a defender.
+      atHome: false,
+      round: null,
+    }
+  }
 
   if (date.kind === 'copa') {
     const campaign = campaignOf(state, date.campaignId)
@@ -250,19 +307,63 @@ export function setupForNext(
   const next = nextFixture(state)
   if (!next) return null
 
-  const opponent = clubById(next.opponentId)
-  if (!opponent) return null
-
-  return {
-    competition: next.competitionName,
-    stage: next.stage,
+  const common = {
     round: next.round ?? state.roundIndex + 1,
     playerName: player.name,
     position: player.position,
     overall: player.overall,
     attrs: player.attrs,
-    team: { name: club.name, clubId: club.id, strength: club.strength },
-    opponent: { name: opponent.name, clubId: opponent.id, strength: opponent.strength },
+  }
+
+  // Selecao: os dois lados sao paises, e quem identifica e a bandeira — por
+  // isso `clubId` nulo dos dois lados. A referencia de nivel tambem muda: o
+  // que faz um jogo dificil na Copa do Mundo e a media das selecoes, nao a da
+  // liga em que ele joga.
+  if (next.competitionId === SELECAO) {
+    const nation = state.national ? nationalSide(state.national) : undefined
+    const fixture = state.national ? nationalFixture(state.national) : null
+    if (!nation || !fixture) return null
+
+    return {
+      ...common,
+      competition: next.competitionName,
+      stage: next.stage,
+      team: {
+        name: nation.name,
+        clubId: null,
+        nationId: nation.id,
+        strength: nation.strength,
+      },
+      opponent: {
+        name: fixture.opponentName,
+        clubId: null,
+        nationId: fixture.opponentId,
+        strength: fixture.opponentStrength,
+      },
+      atHome: false,
+      expected: expectedOutputPerMatch({
+        overall: player.overall,
+        position: player.position,
+        club: asClub(nation),
+        leagueAverageStrength: NATIONS_AVERAGE,
+      }),
+    }
+  }
+
+  const opponent = clubById(next.opponentId)
+  if (!opponent) return null
+
+  return {
+    ...common,
+    competition: next.competitionName,
+    stage: next.stage,
+    team: { name: club.name, clubId: club.id, nationId: null, strength: club.strength },
+    opponent: {
+      name: opponent.name,
+      clubId: opponent.id,
+      nationId: null,
+      strength: opponent.strength,
+    },
     atHome: next.atHome,
     expected: expectedOutputPerMatch({
       overall: player.overall,
@@ -270,6 +371,22 @@ export function setupForNext(
       club,
       leagueAverageStrength,
     }),
+  }
+}
+
+/**
+ * A selecao no formato que o calculo de producao espera.
+ *
+ * Ele pede um `Club` porque so olha forca — selecao nao tem liga nem folha
+ * salarial, e nada aqui chega perto de dinheiro.
+ */
+function asClub(nation: { id: string; name: string; strength: number }): Club {
+  return {
+    id: nation.id,
+    name: nation.name,
+    leagueId: SELECAO,
+    strength: nation.strength,
+    money: 1,
   }
 }
 
@@ -292,10 +409,48 @@ export function completeDate(
   if (isSeasonOver(state)) return state
 
   const date = state.dates[state.dateIndex]
-  const next = date.kind === 'copa' ? completeCupDate(state, date.campaignId, played, rng)
-    : completeLeagueRound(state, played, rng)
+
+  const next =
+    date.kind === 'copa'
+      ? completeCupDate(state, date.campaignId, played, rng)
+      : date.kind === 'selecao'
+        ? completeNationalDateOf(state, played, rng)
+        : completeLeagueRound(state, played, rng)
 
   return { ...next, dateIndex: state.dateIndex + 1 }
+}
+
+/**
+ * A data de selecao.
+ *
+ * A partida nao entra em `log`: o ano de selecao tem registro proprio, e o
+ * adversario ali e um pais. Quando o jogador nao foi relacionado, a partida
+ * corre pela simulacao e entra no ano como jogo que ele viu de fora.
+ */
+function completeNationalDateOf(
+  state: MatchdaySeason,
+  played: { teamGoals: number; opponentGoals: number; player: PlayerMatchResult } | null,
+  rng: Rng,
+): MatchdaySeason {
+  if (!state.national) return state
+
+  const fixture = nationalFixture(state.national)
+
+  return {
+    ...state,
+    national: completeNationalDate(
+      state.national,
+      fixture && played
+        ? {
+            forGoals: played.teamGoals,
+            againstGoals: played.opponentGoals,
+            goals: played.player.goals,
+            assists: played.player.assists,
+          }
+        : null,
+      rng,
+    ),
+  }
 }
 
 function completeCupDate(
@@ -419,6 +574,7 @@ export function finishMatchdaySeason(
   stats: PlayerSeasonStats
   cups: CompetitionRun[]
   winners: Record<string, string>
+  national: NationalSeason | null
 } {
   const outcome = finalizeLeague(
     league,
@@ -436,6 +592,7 @@ export function finishMatchdaySeason(
     stats: statsFromLog(state.log.filter((entry) => entry.competitionId === state.leagueId)),
     cups: state.campaigns.map((campaign) => runFrom(campaign, state.log)),
     winners,
+    national: state.national ? finishNationalSeason(state.national) : null,
   }
 }
 

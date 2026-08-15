@@ -25,7 +25,7 @@ export function isSaveSlot(value: string): value is SaveSlot {
  * ele. Guardar a versão é o que permite recusar o save com uma explicação em
  * vez de carregar uma carreira quebrada.
  */
-export const SNAPSHOT_VERSION = 2
+export const SNAPSHOT_VERSION = 3
 
 /**
  * A carreira congelada, do jeito que o jogo a retoma.

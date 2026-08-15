@@ -11,6 +11,7 @@
  */
 
 import type { CareerState, SeasonRecord } from './career'
+import { competitionImageId } from './competitions'
 import { leagueById } from './data/leagues'
 
 export type ClubSpell = {
@@ -76,8 +77,58 @@ export function clubSpells(state: CareerState): ClubSpell[] {
   return spells
 }
 
+/** Um titulo conquistado numa temporada. */
+export type SeasonTitle = {
+  name: string
+  /** Id da imagem da taca — ver `trophyImage`. */
+  imageId: string
+  scope: 'clube' | 'selecao'
+}
+
+/**
+ * Os titulos de uma temporada, na ordem em que valem ser celebrados.
+ *
+ * Fica aqui, e nao na tela, porque e a mesma regra que monta a sala de
+ * trofeus: se a cerimonia e a estante discordassem sobre o que e titulo, uma
+ * das duas estaria mentindo.
+ */
+export function titlesIn(season: SeasonRecord): SeasonTitle[] {
+  const titles: SeasonTitle[] = []
+
+  if (season.champion) {
+    titles.push({
+      name: leagueName(season),
+      imageId: season.leagueId,
+      scope: 'clube',
+    })
+  }
+
+  for (const run of season.cups) {
+    if (!run.won) continue
+
+    titles.push({
+      name: run.name,
+      imageId: competitionImageId(run.id, season.leagueId),
+      scope: 'clube',
+    })
+  }
+
+  const tournament = season.national?.tournament
+  if (tournament?.won) {
+    titles.push({ name: tournament.name, imageId: tournament.id, scope: 'selecao' })
+  }
+
+  return titles
+}
+
 export type Trophy = {
   name: string
+  /**
+   * Id da imagem da taca — ver `trophyImage`. E o id da liga para titulo de
+   * campeonato, `cup-${pais}` para copa nacional, e o proprio id da
+   * competicao no resto.
+   */
+  imageId: string
   scope: 'clube' | 'selecao'
   count: number
   /** Os anos em que foi conquistado, na ordem. */
@@ -94,7 +145,12 @@ export type Trophy = {
 export function trophyCase(state: CareerState): Trophy[] {
   const byName = new Map<string, Trophy>()
 
-  const add = (name: string, scope: Trophy['scope'], year: string) => {
+  const add = (
+    name: string,
+    imageId: string,
+    scope: Trophy['scope'],
+    year: string,
+  ) => {
     const existing = byName.get(name)
 
     if (existing) {
@@ -103,20 +159,12 @@ export function trophyCase(state: CareerState): Trophy[] {
       return
     }
 
-    byName.set(name, { name, scope, count: 1, years: [year] })
+    byName.set(name, { name, imageId, scope, count: 1, years: [year] })
   }
 
   for (const season of state.seasons) {
-    if (season.champion) {
-      add(leagueName(season), 'clube', season.label)
-    }
-
-    for (const run of season.cups) {
-      if (run.won) add(run.name, 'clube', season.label)
-    }
-
-    if (season.national?.tournament?.won) {
-      add(season.national.tournament.name, 'selecao', season.label)
+    for (const title of titlesIn(season)) {
+      add(title.name, title.imageId, title.scope, season.label)
     }
   }
 

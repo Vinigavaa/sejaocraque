@@ -297,6 +297,8 @@ export type MatchSide = {
   name: string
   /** Null em partida de selecao, onde quem identifica e a bandeira. */
   clubId: string | null
+  /** Preenchido so em partida de selecao. E o que escolhe a bandeira. */
+  nationId: string | null
   strength: number
 }
 

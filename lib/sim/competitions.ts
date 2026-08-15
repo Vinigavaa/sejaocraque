@@ -415,7 +415,7 @@ export type NationalTournament = {
   slots: number
 }
 
-const NATIONAL_TOURNAMENTS: NationalTournament[] = [
+export const NATIONAL_TOURNAMENTS: NationalTournament[] = [
   { id: 'euro', name: 'Eurocopa', confederation: 'UEFA', slots: 16 },
   { id: 'copa-america', name: 'Copa América', confederation: 'CONMEBOL', slots: 8 },
   { id: 'can', name: 'Copa Africana', confederation: 'CAF', slots: 8 },
